@@ -19,7 +19,7 @@ The walkthrough below builds everything against a tiny REST API that stores one 
 - `api.update(&greeting)` does `PUT /greetings/<name>`
 - `api.remove(&greeting)` does `DELETE /greetings/<name>`
 
-## Tutorial — declarative state with `ManagedSet`
+## Tutorial — declarative state with `OptativeSet`
 
 ### Step 1. Define a data type that models our resource
 
@@ -71,10 +71,10 @@ impl Lifecycle for Greeting {
 ### Step 3. Initialize a store and the API client
 
 ```rust
-use optative::{ManagedSet, Reconcile};
+use optative::{OptativeSet, Reconcile};
 
 let mut api = Api { base_url: "http://greetings.example".into() };
-let mut store: ManagedSet<Greeting> = ManagedSet::new();
+let mut store: OptativeSet<Greeting> = OptativeSet::new();
 ```
 
 ### Step 4. Declare your initial desired set

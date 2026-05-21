@@ -99,11 +99,11 @@ pub trait Lifecycle {
     }
 }
 
-pub struct ManagedSet<T: Lifecycle> {
+pub struct OptativeSet<T: Lifecycle> {
     store: HashMap<T::Key, T::State>,
 }
 
-impl<T: Lifecycle> Default for ManagedSet<T> {
+impl<T: Lifecycle> Default for OptativeSet<T> {
     fn default() -> Self {
         Self {
             store: HashMap::new(),
@@ -111,7 +111,7 @@ impl<T: Lifecycle> Default for ManagedSet<T> {
     }
 }
 
-impl<T: Lifecycle + 'static> ManagedSet<T>
+impl<T: Lifecycle + 'static> OptativeSet<T>
 where
     T::Error: Debug,
 {
@@ -215,7 +215,7 @@ where
     }
 }
 
-impl<T: Lifecycle + 'static> reconcile::Reconcile<T> for ManagedSet<T>
+impl<T: Lifecycle + 'static> reconcile::Reconcile<T> for OptativeSet<T>
 where
     T::Error: Debug,
 {
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn new_item_calls_enter_and_stores_state() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "a".to_string(),
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn removed_item_calls_exit_with_old_state() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "a".to_string(),
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn existing_item_calls_reconcile_self_not_enter() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "a".to_string(),
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn duplicate_keys_in_batch_only_one_enter() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![
                 TestSpec {
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn get_returns_state_after_enter() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "b".to_string(),
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn get_returns_updated_state_after_reconcile() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "c".to_string(),
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn iter_mut_yields_mutable_state_visible_via_get() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "d".to_string(),
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn get_mut_returns_mutable_reference_visible_via_get() {
         let mut ctx = make_ctx();
-        let mut ms: ManagedSet<TestSpec> = ManagedSet::new();
+        let mut ms: OptativeSet<TestSpec> = OptativeSet::new();
         ms.reconcile(
             vec![TestSpec {
                 id: "e".to_string(),
@@ -513,7 +513,7 @@ mod tests {
 
         #[test]
         fn enter_err_not_added_to_store_error_returned() {
-            let mut ms: ManagedSet<FallibleSpec> = ManagedSet::new();
+            let mut ms: OptativeSet<FallibleSpec> = OptativeSet::new();
             let errors = ms.reconcile(
                 vec![FallibleSpec {
                     id: "x".to_string(),
@@ -533,7 +533,7 @@ mod tests {
 
         #[test]
         fn enter_ok_adds_item_to_store_no_errors() {
-            let mut ms: ManagedSet<FallibleSpec> = ManagedSet::new();
+            let mut ms: OptativeSet<FallibleSpec> = OptativeSet::new();
             let errors = ms.reconcile(
                 vec![FallibleSpec {
                     id: "y".to_string(),
@@ -609,7 +609,7 @@ mod tests {
         #[test]
         fn reconcile_err_exit_called_entry_removed_error_returned() {
             EXIT_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
-            let mut ms: ManagedSet<UpdateFallibleSpec> = ManagedSet::new();
+            let mut ms: OptativeSet<UpdateFallibleSpec> = OptativeSet::new();
 
             let e1 = ms.reconcile(
                 vec![UpdateFallibleSpec {
@@ -707,7 +707,7 @@ mod tests {
         #[test]
         fn enter_receives_output_and_can_write_to_it() {
             let (mut tx, rx) = mpsc::channel::<String>();
-            let mut ms: ManagedSet<ChannelOutputLifecycle> = ManagedSet::new();
+            let mut ms: OptativeSet<ChannelOutputLifecycle> = OptativeSet::new();
             ms.reconcile(
                 vec![ChannelOutputLifecycle {
                     id: "o1".to_string(),
@@ -723,7 +723,7 @@ mod tests {
         #[test]
         fn exit_does_not_receive_output() {
             let (mut tx, rx) = mpsc::channel::<String>();
-            let mut ms: ManagedSet<ChannelOutputLifecycle> = ManagedSet::new();
+            let mut ms: OptativeSet<ChannelOutputLifecycle> = OptativeSet::new();
             ms.reconcile(
                 vec![ChannelOutputLifecycle {
                     id: "o2".to_string(),

@@ -1,14 +1,14 @@
-//! Mirrors the "Using ManagedSet" tutorial in README.md.
+//! Mirrors the "Using OptativeSet" tutorial in README.md.
 
 mod common;
 use common::{Api, Greeting, spawn_greetings_server};
-use optative::{ManagedSet, Reconcile};
+use optative::{OptativeSet, Reconcile};
 
 #[test]
 fn managed_set_tutorial_steps() {
     let (base_url, server) = spawn_greetings_server();
     let mut api = Api { base_url };
-    let mut store: ManagedSet<Greeting> = ManagedSet::new();
+    let mut store: OptativeSet<Greeting> = OptativeSet::new();
 
     // Step 4 — initial desired set.
     store.reconcile(
