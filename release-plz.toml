@@ -1,0 +1,13 @@
+[workspace]
+# Disable release-plz's built-in cargo publish to work around a gitoxide
+# slotmap overflow bug (GitoxideLabs/gitoxide#1788) that crashes during
+# index polling. Publishing is handled separately via the per-package
+# loop in the release workflow.
+publish = false
+
+# Only trigger releases for commits with meaningful changes.
+# This breaks the version bump loop (release-plz#1181) where the
+# "chore: release" commit's Cargo.toml/Cargo.lock changes would
+# otherwise be treated as unreleased work, creating an infinite
+# cycle of spurious patch releases.
+release_commits = "^(feat|fix|refactor|perf|build)"

@@ -1,85 +1,104 @@
 # optative
 
-A reconciler as a memory model. Declare desired state, optative runs `enter` / `reconcile_self` / `exit` on the diff.
+Simple generic traits for building reconciler systems. 
 
-Extracted from [tauler](https://github.com/kantord/tauler) (also mine) because the pattern turned out to be useful well beyond that project: process pools, connection pools, cache entries, subscriptions, watchers — anything driven by an external desired-state iterator.
+Reconciliation, in this context, means that you manage certain items (such as processes, cloud resources, or UI components), and control the desired state. 
 
-## Use `ManagedSet` for the common case
+You define lifecycle events:
+- How to create an item
+- How to update an item
+- How to delete an item
+
+You also decide what the desired state looks like, and when the reconciliation needs to happen. Optative takes care of calling the lifecycle events to achieve yor desired state.
+
+Extracted from my in-progress project [tauler](https://github.com/kantord/tauler) (a data-driven widgeting system) because the pattern turned out to be useful well beyond that project: process pools, connection pools, file watchers, subscriptions, etc.
+
+The walkthrough below builds everything against a tiny REST API that stores one personal greeting per person. The `Api` client itself is plumbing - its full source lives in [`crates/optative/tests/common/mod.rs`](crates/optative/tests/common/mod.rs) - but for the tutorial, all you need to know is:
+
+- `api.create(&greeting)` does `POST /greetings/<name>` with the message as the body
+- `api.update(&greeting)` does `PUT /greetings/<name>`
+- `api.remove(&greeting)` does `DELETE /greetings/<name>`
+
+## Tutorial — declarative state with `ManagedSet`
+
+### Step 1. Define a data type that models our resource
 
 ```rust
-use optative::{Lifecycle, ManagedSet, Reconcile};
+use serde::{Deserialize, Serialize};
 
-struct Greeter { name: String }
-
-impl std::fmt::Display for Greeter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
+#[derive(Serialize, Deserialize)]
+struct Greeting {
+    person: String,
+    message: String,
 }
+```
 
-impl Lifecycle for Greeter {
+### Step 2. Implement `Lifecycle` to teach optative how to manage one
+
+We implement the Lifecycle trait by delegating the work to our API client.
+
+```rust
+use optative::Lifecycle;
+
+impl Lifecycle for Greeting {
     type Key = String;
-    type State = ();
-    type Context = ();
+    type State = Greeting;        // current tracked state
+    type Context = Api;           // the REST client
     type Output = ();
-    type Error = std::convert::Infallible;
+    type Error = ureq::Error;
 
-    fn key(&self) -> String { self.name.clone() }
+    fn key(&self) -> String { self.person.clone() }
 
-    fn enter(self, _: &mut (), _: &mut ()) -> Result<(), Self::Error> {
-        println!("hello, {}", self.name);
+    fn enter(self, api: &mut Api, _: &mut ()) -> Result<Greeting, Self::Error> {
+        api.create(&self)?;
+        Ok(self)
+    }
+
+    fn reconcile_self(self, state: &mut Greeting, api: &mut Api, _: &mut ()) -> Result<(), Self::Error> {
+        if state.message != self.message {
+            api.update(&self)?;
+            *state = self;
+        }
         Ok(())
     }
-    fn reconcile_self(self, _: &mut (), _: &mut (), _: &mut ()) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn exit(_: (), _: &mut (), _: &mut ()) -> Result<(), Self::Error> {
-        Ok(())
+
+    fn exit(state: Greeting, api: &mut Api, _: &mut ()) -> Result<(), Self::Error> {
+        api.remove(&state)
     }
 }
-
-let mut set: ManagedSet<Greeter> = ManagedSet::new();
-set.reconcile(vec![Greeter { name: "ada".into() }], &mut (), &mut ()); // ada enters
-set.reconcile(vec![], &mut (), &mut ());                                // ada exits
 ```
 
-## Build your own storage engine
-
-`ManagedSet` is just one implementation of the `Reconcile` trait. Implement it yourself when you need different storage — sorted iteration, a persistent backend, sharding, a test mock, whatever.
+### Step 3. Initialize a store and the API client
 
 ```rust
-use optative::{Lifecycle, Reconcile, ReconcileErrors};
+use optative::{ManagedSet, Reconcile};
 
-/// A reconciler that only ever holds the most recent desired item.
-struct LatestOnly<T: Lifecycle> {
-    current: Option<(T::Key, T::State)>,
-}
-
-impl<T: Lifecycle> Reconcile<T> for LatestOnly<T> {
-    fn reconcile(
-        &mut self,
-        desired: impl IntoIterator<Item = T>,
-        ctx: &mut T::Context,
-        output: &mut T::Output,
-    ) -> ReconcileErrors<T::Key, T::Error> {
-        let mut errors = ReconcileErrors::new();
-        let last = desired.into_iter().last();
-        if let Some((key, state)) = self.current.take() {
-            if let Err(e) = T::exit(state, ctx, output) {
-                errors.push((key, e));
-            }
-        }
-        if let Some(item) = last {
-            let key = item.key();
-            match item.enter(ctx, output) {
-                Ok(state) => self.current = Some((key, state)),
-                Err(e) => errors.push((key, e)),
-            }
-        }
-        errors
-    }
-}
+let mut api = Api { base_url: "http://greetings.example".into() };
+let mut store: ManagedSet<Greeting> = ManagedSet::new();
 ```
+
+### Step 4. Declare your initial desired set
+
+The remote state will converge to it automatically.
+
+```rust
+store.reconcile(vec![
+    Greeting { person: "ada".into(),   message: "hello, ada".into() },
+    Greeting { person: "grace".into(), message: "welcome, grace".into() },
+], &mut api, &mut ());
+```
+
+-> `POST /greetings/ada`, `POST /greetings/grace`.
+
+### Step 5. Change your mind
+
+```rust
+store.reconcile(vec![
+    Greeting { person: "ada".into(), message: "good morning, ada".into() },
+], &mut api, &mut ());
+```
+
+-> `PUT /greetings/ada` (message differs), `DELETE /greetings/grace` (no longer in the desired set). optative diffed the two passes and called the right hook for each item.
 
 ## License
 

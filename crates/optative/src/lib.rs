@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::hash::Hash;
 
 pub mod reconcile;
@@ -10,7 +10,7 @@ pub struct LifecycleContext {
     pub metadata: serde_json::Map<String, serde_json::Value>,
 }
 
-pub trait Lifecycle: Display {
+pub trait Lifecycle {
     type Key: Hash + Eq + Clone + serde::Serialize + serde::de::DeserializeOwned;
     type State;
     type Context;
@@ -18,6 +18,13 @@ pub trait Lifecycle: Display {
     type Error;
 
     fn key(&self) -> Self::Key;
+
+    /// Human-readable label for logs and traces. Defaults to empty; override
+    /// when you want lifecycle events to identify themselves by something
+    /// other than `key`.
+    fn display_name(&self) -> String {
+        String::new()
+    }
 
     fn enter(
         self,
@@ -44,7 +51,7 @@ pub trait Lifecycle: Display {
 
     fn lifecycle_context(&self) -> LifecycleContext {
         let mut ctx = LifecycleContext {
-            display_name: self.to_string(),
+            display_name: self.display_name(),
             metadata: serde_json::Map::new(),
         };
         self.enhance_lifecycle_context(&mut ctx);

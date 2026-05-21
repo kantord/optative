@@ -14,8 +14,8 @@ pub trait Reconcile<T: Lifecycle> {
 #[cfg(test)]
 mod tests {
     mod fixtures {
-        use crate::reconcile::{Reconcile, ReconcileErrors};
         use crate::Lifecycle;
+        use crate::reconcile::{Reconcile, ReconcileErrors};
         use std::convert::Infallible;
         use std::sync::{Arc, Mutex};
 
@@ -109,7 +109,7 @@ mod tests {
     }
 
     mod trait_usability {
-        use super::fixtures::{drive, make_ctx, Item, RecordingReconciler};
+        use super::fixtures::{Item, RecordingReconciler, drive, make_ctx};
         use crate::ManagedSet;
 
         #[test]
@@ -129,7 +129,7 @@ mod tests {
     }
 
     mod managed_set_via_trait {
-        use super::fixtures::{log, make_ctx, Item};
+        use super::fixtures::{Item, log, make_ctx};
         use crate::{ManagedSet, Reconcile};
 
         fn check<R: Reconcile<Item>>(
@@ -181,7 +181,7 @@ mod tests {
     }
 
     mod mock_reconciler {
-        use super::fixtures::{drive, log, make_ctx, Item, RecordingReconciler};
+        use super::fixtures::{Item, RecordingReconciler, drive, log, make_ctx};
 
         #[test]
         fn records_calls_without_managing_state() {

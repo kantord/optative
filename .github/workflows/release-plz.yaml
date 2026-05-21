@@ -1,0 +1,97 @@
+name: Release-plz
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'kantord' }}
+    permissions:
+      contents: write
+    concurrency:
+      group: release-plz-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - name: Create git tags and GitHub releases
+        uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Publish crates individually, skipping ones already on crates.io.
+      # This works around release-plz's gix slotmap overflow during index
+      # polling (GitoxideLabs/gitoxide#1788).
+      # Iteration order is a topological sort over intra-workspace deps so a
+      # crate is always published after the workspace crates it depends on.
+      # NOTE: If publish ordering breaks again (e.g. new kinds of workspace
+      # cross-deps, or the tsort pipeline misbehaving), this step is the lever
+      # to update — make sure dependents are still ordered after their deps.
+      - name: Publish to crates.io
+        run: |
+          set -o pipefail
+          order=$(cargo metadata --format-version 1 | jq -r '
+            . as $m
+            | [$m.workspace_members[] | . as $id | $m.packages[] | select(.id == $id) | .name] as $ws
+            | $m.packages[]
+            | select(.name as $n | $ws | index($n))
+            | . as $p
+            | "\($p.name) \($p.name)",
+              (.dependencies[] | select(.name as $d | $ws | index($d)) | "\(.name) \($p.name)")
+          ' | tsort)
+          for pkg in $order; do
+            echo "Publishing $pkg..."
+            if cargo publish -p "$pkg" 2>&1 | tee /tmp/publish.log; then
+              continue
+            fi
+            if grep -q 'already exists on crates.io' /tmp/publish.log; then
+              echo "$pkg already published, skipping."
+            else
+              echo "$pkg failed to publish."
+              exit 1
+            fi
+          done
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    needs:
+      - release-plz-release
+    if: ${{ github.repository_owner == 'kantord' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - name: Run release-plz release-pr
+        uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
