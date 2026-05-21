@@ -3,5 +3,12 @@ name = "optative"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "A reconciler as a memory model: declare desired state, run lifecycle hooks (enter/reconcile/exit) on the diff."
+repository = "https://github.com/kantord/optative"
+keywords = ["reconciler", "lifecycle", "managed", "state", "diff"]
+categories = ["data-structures", "memory-management"]
+readme = "../../README.md"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

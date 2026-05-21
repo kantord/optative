@@ -1,15 +1,10 @@
-# optative
+//! Compile-checks the snippets shown in README.md so they don't drift.
 
-A reconciler as a memory model. Declare desired state, optative runs `enter` / `reconcile_self` / `exit` on the diff.
+use optative::{Lifecycle, ManagedSet, Reconcile, ReconcileErrors};
 
-Extracted from [tauler](https://github.com/kantord/tauler) (also mine) because the pattern turned out to be useful well beyond that project: process pools, connection pools, cache entries, subscriptions, watchers — anything driven by an external desired-state iterator.
-
-## Use `ManagedSet` for the common case
-
-```rust
-use optative::{Lifecycle, ManagedSet, Reconcile};
-
-struct Greeter { name: String }
+struct Greeter {
+    name: String,
+}
 
 impl std::fmt::Display for Greeter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -24,10 +19,10 @@ impl Lifecycle for Greeter {
     type Output = ();
     type Error = std::convert::Infallible;
 
-    fn key(&self) -> String { self.name.clone() }
-
+    fn key(&self) -> String {
+        self.name.clone()
+    }
     fn enter(self, _: &mut (), _: &mut ()) -> Result<(), Self::Error> {
-        println!("hello, {}", self.name);
         Ok(())
     }
     fn reconcile_self(self, _: &mut (), _: &mut (), _: &mut ()) -> Result<(), Self::Error> {
@@ -38,19 +33,13 @@ impl Lifecycle for Greeter {
     }
 }
 
-let mut set: ManagedSet<Greeter> = ManagedSet::new();
-set.reconcile(vec![Greeter { name: "ada".into() }], &mut (), &mut ()); // ada enters
-set.reconcile(vec![], &mut (), &mut ());                                // ada exits
-```
+#[test]
+fn managed_set_example_compiles() {
+    let mut set: ManagedSet<Greeter> = ManagedSet::new();
+    set.reconcile(vec![Greeter { name: "ada".into() }], &mut (), &mut ());
+    set.reconcile(vec![], &mut (), &mut ());
+}
 
-## Build your own storage engine
-
-`ManagedSet` is just one implementation of the `Reconcile` trait. Implement it yourself when you need different storage — sorted iteration, a persistent backend, sharding, a test mock, whatever.
-
-```rust
-use optative::{Lifecycle, Reconcile, ReconcileErrors};
-
-/// A reconciler that only ever holds the most recent desired item.
 struct LatestOnly<T: Lifecycle> {
     current: Option<(T::Key, T::State)>,
 }
@@ -79,8 +68,11 @@ impl<T: Lifecycle> Reconcile<T> for LatestOnly<T> {
         errors
     }
 }
-```
 
-## License
-
-MIT OR Apache-2.0
+#[test]
+fn latest_only_example_compiles() {
+    let mut latest: LatestOnly<Greeter> = LatestOnly { current: None };
+    latest.reconcile(vec![Greeter { name: "ada".into() }], &mut (), &mut ());
+    latest.reconcile(vec![Greeter { name: "grace".into() }], &mut (), &mut ());
+    latest.reconcile(vec![], &mut (), &mut ());
+}
