@@ -77,6 +77,13 @@ let mut api = Api { base_url: "http://greetings.example".into() };
 let mut store: OptativeSet<Greeting> = OptativeSet::new();
 ```
 
+If the server already has greetings, seed them so they skip `enter`:
+
+```rust
+let existing: Vec<(String, Greeting)> = /* fetch from the API */;
+let mut store = OptativeSet::<Greeting>::with_initial_state(existing);
+```
+
 ### Step 4. Declare your initial desired set
 
 The remote state will converge to it automatically.
