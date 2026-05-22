@@ -4,10 +4,14 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use optative::Lifecycle;
 
 use super::{StreamItem, StreamKind};
+
+/// How long [`Lifecycle::exit`] waits for SIGTERM before escalating to SIGKILL.
+pub const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
 /// Stable identity for a process: uniquely identifies which process to manage.
 /// Used as the key in `Lifecycle` so that `OptativeSet` can track processes by identity.
@@ -206,6 +210,21 @@ impl Lifecycle for ProcessSource {
         _ctx: &mut (),
         _output: &mut Self::Output,
     ) -> Result<(), Self::Error> {
+        // ESRCH if the child is already gone is fine; the poll loop reaps it.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(state.child.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+
+        let deadline = Instant::now() + SHUTDOWN_GRACE_PERIOD;
+        while Instant::now() < deadline {
+            match state.child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => thread::sleep(Duration::from_millis(50)),
+                Err(_) => break,
+            }
+        }
+
         let _ = state.child.kill();
         let _ = state.child.wait();
         Ok(())
@@ -322,10 +341,11 @@ mod tests {
     }
 
     mod lifecycle {
-        use super::super::{ProcessIdentity, ProcessSource, SpawnError};
+        use super::super::{ProcessIdentity, ProcessSource, SHUTDOWN_GRACE_PERIOD, SpawnError};
         use optative::Lifecycle;
         use std::collections::BTreeMap;
         use std::sync::mpsc;
+        use std::time::{Duration, Instant};
 
         #[test]
         fn reconcile_self_propagates_err_when_restart_spawn_fails() {
@@ -344,7 +364,7 @@ mod tests {
             .enter(&mut (), &mut tx)
             .expect("enter must succeed with /bin/sh");
 
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(200));
             assert!(
                 matches!(state.child.try_wait(), Ok(Some(_))),
                 "child should have exited"
@@ -356,6 +376,50 @@ mod tests {
                 Err(SpawnError::ProcessSpawnFailed { .. }) => {}
                 Ok(_) => panic!("expected Err, got Ok"),
             }
+        }
+
+        fn trap_spec(key: &str, trap_body: &str) -> ProcessSource {
+            ProcessSource {
+                identity: ProcessIdentity {
+                    bin: "/bin/sh".to_string(),
+                    key: key.to_string(),
+                },
+                // `wait` is interruptible by signals; foreground `sleep` is not.
+                args: vec![
+                    "-c".to_string(),
+                    format!("trap '{trap_body}' TERM; sleep 60 & wait"),
+                ],
+                env: BTreeMap::new(),
+                current_dir: None,
+                props: None,
+            }
+        }
+
+        #[test]
+        fn exit_reaps_graceful_child_via_sigterm() {
+            let (mut tx, _rx) = mpsc::channel();
+            let state = trap_spec("graceful", "exit 0")
+                .enter(&mut (), &mut tx)
+                .expect("enter must succeed");
+            std::thread::sleep(Duration::from_millis(150));
+
+            let start = Instant::now();
+            ProcessSource::exit(state, &mut (), &mut tx).expect("exit must succeed");
+            assert!(start.elapsed() < Duration::from_secs(2));
+        }
+
+        #[test]
+        #[ignore = "slow"]
+        fn exit_escalates_to_sigkill_when_child_ignores_sigterm() {
+            let (mut tx, _rx) = mpsc::channel();
+            let state = trap_spec("stubborn", "")
+                .enter(&mut (), &mut tx)
+                .expect("enter must succeed");
+            std::thread::sleep(Duration::from_millis(150));
+
+            let start = Instant::now();
+            ProcessSource::exit(state, &mut (), &mut tx).expect("exit must succeed");
+            assert!(start.elapsed() >= SHUTDOWN_GRACE_PERIOD);
         }
     }
 }

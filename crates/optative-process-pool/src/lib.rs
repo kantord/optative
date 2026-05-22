@@ -1,6 +1,13 @@
+#![forbid(unsafe_code)]
+
+#[cfg(not(unix))]
+compile_error!("optative-process-pool currently only supports Unix targets");
+
 mod process;
 
-pub use process::{ProcessIdentity, ProcessSource, ProcessState, SpawnError};
+pub use process::{
+    ProcessIdentity, ProcessSource, ProcessState, SHUTDOWN_GRACE_PERIOD, SpawnError,
+};
 
 use std::sync::mpsc;
 
