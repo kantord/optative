@@ -119,6 +119,15 @@ where
         Self::default()
     }
 
+    /// Seed the set with `(key, state)` pairs without calling `enter`. For
+    /// items that already exist outside the lifecycle (processes, files,
+    /// windows); the next `reconcile` treats them as present.
+    pub fn with_initial_state(items: impl IntoIterator<Item = (T::Key, T::State)>) -> Self {
+        Self {
+            store: items.into_iter().collect(),
+        }
+    }
+
     fn dedup_by_key(items: impl IntoIterator<Item = T>) -> HashMap<T::Key, T> {
         let mut map = HashMap::new();
         for item in items {
