@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, Seek, SeekFrom, Write as IoWrite};
-use std::os::unix::io::FromRawFd;
+use std::io::{BufRead, Write as IoWrite};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::mpsc;
@@ -22,7 +21,6 @@ pub struct ProcessIdentity {
 #[derive(Clone, Debug)]
 pub struct ProcessSource {
     pub identity: ProcessIdentity,
-    pub script: Option<String>,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub current_dir: Option<PathBuf>,
@@ -38,8 +36,6 @@ pub struct ProcessState {
 /// Error type for process spawning failures.
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
-    #[error("memfd_create failed for {bin}")]
-    MemfdCreateFailed { bin: String },
     #[error("failed to spawn {bin}: {source}")]
     ProcessSpawnFailed {
         bin: String,
@@ -50,7 +46,7 @@ pub enum SpawnError {
 
 fn spawn_stdout_thread(
     stdout: std::process::ChildStdout,
-    spec: ProcessSource,
+    identity: ProcessIdentity,
     tx: mpsc::Sender<StreamItem>,
 ) {
     thread::spawn(move || {
@@ -59,7 +55,7 @@ fn spawn_stdout_thread(
             match line {
                 Ok(l) => {
                     let item = StreamItem {
-                        key: (spec.identity.bin.clone(), spec.script.clone()),
+                        key: identity.clone(),
                         stream: StreamKind::Stdout,
                         line: l,
                     };
@@ -124,24 +120,6 @@ pub(super) fn spawn_process(
         cmd.current_dir(dir);
     }
 
-    // If a script is provided, write it to a memfd and pass the path as an argument.
-    #[allow(clippy::option_if_let_else)]
-    let _memfd_file = if let Some(ref content) = spec.script {
-        let fd = unsafe { libc::memfd_create(c"tauler-script".as_ptr(), 0) };
-        if fd < 0 {
-            return Err(SpawnError::MemfdCreateFailed {
-                bin: spec.identity.bin.clone(),
-            });
-        }
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        let _ = file.write_all(content.as_bytes());
-        let _ = file.seek(SeekFrom::Start(0));
-        cmd.arg(format!("/proc/self/fd/{}", fd));
-        Some(file) // keep alive until after spawn so fd is inherited
-    } else {
-        None
-    };
-
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::piped());
@@ -154,7 +132,7 @@ pub(super) fn spawn_process(
     };
 
     if let Some(stdout) = child.stdout.take() {
-        spawn_stdout_thread(stdout, spec.clone(), tx.clone());
+        spawn_stdout_thread(stdout, spec.identity.clone(), tx.clone());
     }
     if let Some(stderr) = child.stderr.take() {
         spawn_stderr_thread(stderr, spec.identity.bin.clone());
@@ -246,7 +224,6 @@ mod tests {
                 bin: bin.to_string(),
                 key: bin.to_string(),
             },
-            script: None,
             args: vec![],
             env: BTreeMap::new(),
             current_dir: None,
@@ -279,13 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn process_source_has_script_and_identity_fields() {
+    fn process_source_has_identity_fields() {
         let spec = ProcessSource {
             identity: ProcessIdentity {
                 bin: "/bin/sh".to_string(),
                 key: "my-key".to_string(),
             },
-            script: Some("echo hello".to_string()),
             args: vec!["--flag".to_string()],
             env: BTreeMap::new(),
             current_dir: None,
@@ -293,7 +269,6 @@ mod tests {
         };
         assert_eq!(spec.identity.bin, "/bin/sh");
         assert_eq!(spec.identity.key, "my-key");
-        assert!(spec.script.is_some());
     }
 
     #[test]
@@ -311,16 +286,6 @@ mod tests {
         use std::sync::mpsc;
 
         #[test]
-        fn memfd_create_failed_error_displays_bin_name() {
-            let err = SpawnError::MemfdCreateFailed {
-                bin: "mybin".to_string(),
-            };
-            let msg = err.to_string();
-            assert!(msg.contains("memfd_create failed"), "got: {msg}");
-            assert!(msg.contains("mybin"), "got: {msg}");
-        }
-
-        #[test]
         fn nonexistent_binary_returns_process_spawn_failed() {
             let (tx, _rx) = mpsc::channel();
             let result = spawn_process(
@@ -331,7 +296,6 @@ mod tests {
                 Err(SpawnError::ProcessSpawnFailed { bin, .. }) => {
                     assert_eq!(bin, "/nonexistent/binary/that/cannot/exist");
                 }
-                Err(other) => panic!("expected ProcessSpawnFailed, got: {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
             }
         }
@@ -352,7 +316,6 @@ mod tests {
                         "bin must start with HOME ({home}); got: {bin}"
                     );
                 }
-                Err(other) => panic!("expected ProcessSpawnFailed, got: {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
             }
         }
@@ -373,7 +336,6 @@ mod tests {
                     bin: "/bin/sh".to_string(),
                     key: "t".to_string(),
                 },
-                script: None,
                 args: vec!["-c".to_string(), "exit 0".to_string()],
                 env: BTreeMap::new(),
                 current_dir: None,
@@ -392,7 +354,6 @@ mod tests {
                 .reconcile_self(&mut state, &mut (), &mut tx);
             match result {
                 Err(SpawnError::ProcessSpawnFailed { .. }) => {}
-                Err(other) => panic!("expected ProcessSpawnFailed, got: {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
             }
         }

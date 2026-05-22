@@ -15,7 +15,7 @@ pub enum StreamKind {
 
 #[derive(Debug)]
 pub struct StreamItem {
-    pub key: (String, Option<String>),
+    pub key: ProcessIdentity,
     pub stream: StreamKind,
     pub line: String,
 }
