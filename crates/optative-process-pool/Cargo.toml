@@ -1,0 +1,17 @@
+[package]
+name = "optative-process-pool"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A reconciling process pool built on the optative lifecycle traits."
+keywords = ["reconciler", "process", "pool", "supervisor", "lifecycle"]
+categories = ["os::unix-apis", "asynchronous"]
+
+[dependencies]
+optative = { version = "0.1.1", path = "../optative" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
