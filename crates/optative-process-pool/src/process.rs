@@ -46,6 +46,11 @@ pub enum SpawnError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to resolve resource: {source}")]
+    ResourceResolutionFailed {
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 fn spawn_stdout_thread(
@@ -315,7 +320,7 @@ mod tests {
                 Err(SpawnError::ProcessSpawnFailed { bin, .. }) => {
                     assert_eq!(bin, "/nonexistent/binary/that/cannot/exist");
                 }
-                Ok(_) => panic!("expected Err, got Ok"),
+                _ => panic!("expected ProcessSpawnFailed"),
             }
         }
 
@@ -335,7 +340,7 @@ mod tests {
                         "bin must start with HOME ({home}); got: {bin}"
                     );
                 }
-                Ok(_) => panic!("expected Err, got Ok"),
+                _ => panic!("expected ProcessSpawnFailed"),
             }
         }
     }
@@ -374,7 +379,7 @@ mod tests {
                 .reconcile_self(&mut state, &mut (), &mut tx);
             match result {
                 Err(SpawnError::ProcessSpawnFailed { .. }) => {}
-                Ok(_) => panic!("expected Err, got Ok"),
+                _ => panic!("expected ProcessSpawnFailed"),
             }
         }
 

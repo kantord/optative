@@ -4,10 +4,14 @@
 compile_error!("optative-process-pool currently only supports Unix targets");
 
 mod process;
+mod resource;
+mod supervisor;
 
 pub use process::{
     ProcessIdentity, ProcessSource, ProcessState, SHUTDOWN_GRACE_PERIOD, SpawnError,
 };
+pub use resource::Resource;
+pub use supervisor::{ProcessSpec, ProcessSupervisor};
 
 use std::sync::mpsc;
 
