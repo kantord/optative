@@ -17,6 +17,7 @@ use std::sync::mpsc;
 
 use optative::reconcile::ReconcileErrors;
 use optative::{OptativeSet, Reconcile};
+use optative_derive::Ephemeral;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamKind {
@@ -31,7 +32,9 @@ pub struct StreamItem {
     pub line: String,
 }
 
+#[derive(Ephemeral)]
 pub struct ProcessPool {
+    #[reconciler(output = stream_tx)]
     inner: OptativeSet<ProcessSource>,
     stream_tx: mpsc::Sender<StreamItem>,
 }
@@ -54,12 +57,5 @@ impl ProcessPool {
     }
     pub fn iter(&self) -> impl Iterator<Item = (&ProcessIdentity, &ProcessState)> {
         self.inner.iter()
-    }
-}
-
-impl Drop for ProcessPool {
-    fn drop(&mut self) {
-        self.inner
-            .reconcile(Vec::new(), &mut (), &mut self.stream_tx);
     }
 }
