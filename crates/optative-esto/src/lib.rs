@@ -1,0 +1,337 @@
+use std::io::{BufRead, Write as IoWrite};
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use optative::{Lifecycle, OptativeSet};
+use optative::reconcile::Reconcile;
+
+#[derive(Debug, thiserror::Error)]
+pub enum EstoError {
+    #[error("command failed ({cmd}): {detail}")]
+    CommandFailed { cmd: String, detail: String },
+    #[error("worker error: {0}")]
+    WorkerError(String),
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+struct WorkerHandle {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout_rx: mpsc::Receiver<String>,
+}
+
+pub struct WorkerPool {
+    cmd: String,
+    handle: Option<WorkerHandle>,
+    stateful: bool,
+}
+
+impl WorkerPool {
+    pub fn new(cmd: String, stateful: bool) -> Self {
+        Self { cmd, handle: None, stateful }
+    }
+
+    fn spawn(&mut self) -> Result<(), EstoError> {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &self.cmd])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => { if tx.send(l).is_err() { break; } }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        self.handle = Some(WorkerHandle { child, stdin, stdout_rx: rx });
+        Ok(())
+    }
+
+    fn kill_and_clear(&mut self) {
+        if let Some(h) = self.handle.as_mut() {
+            let _ = h.child.kill();
+            let _ = h.child.wait();
+        }
+        self.handle = None;
+    }
+
+    pub fn dispatch(&mut self, task_line: String) -> Result<(), EstoError> {
+        if !self.stateful {
+            return self.dispatch_simple(&task_line);
+        }
+        if self.handle.is_none() {
+            self.spawn()?;
+        }
+        self.dispatch_with_retry(task_line, 1)
+    }
+
+    // Per-item invocation: sh -c "$cmd" _ key [value [old new]]
+    // $1=key, $2=value-or-old, $3=new (for update). Exit 0 = success.
+    fn dispatch_simple(&self, task_line: &str) -> Result<(), EstoError> {
+        let task_args: Vec<&str> = task_line.splitn(3, '\t').collect();
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&self.cmd)
+            .arg("_")
+            .args(&task_args)
+            .stderr(Stdio::inherit())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(EstoError::WorkerError(format!("exited with {status}")))
+        }
+    }
+
+    fn dispatch_with_retry(&mut self, task_line: String, retries_left: u8) -> Result<(), EstoError> {
+        let key = task_line.splitn(2, '\t').next().unwrap_or("").to_string();
+        let h = self.handle.as_mut().unwrap();
+
+        h.stdin.write_all(format!("{task_line}\n").as_bytes()).map_err(EstoError::Io)?;
+        h.stdin.flush().map_err(EstoError::Io)?;
+
+        loop {
+            let line = h.stdout_rx.recv().map_err(|_| {
+                EstoError::WorkerError("worker stdout closed unexpectedly".into())
+            })?;
+
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            match parts.as_slice() {
+                ["done", k] if *k == key => return Ok(()),
+                ["error", k, msg] if *k == key => {
+                    return Err(EstoError::WorkerError((*msg).to_string()))
+                }
+                ["shutdown"] => {
+                    if retries_left == 0 {
+                        return Err(EstoError::WorkerError(
+                            "worker repeatedly requested shutdown".into(),
+                        ));
+                    }
+                    self.kill_and_clear();
+                    self.spawn()?;
+                    return self.dispatch_with_retry(task_line, retries_left - 1);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        self.kill_and_clear();
+    }
+}
+
+pub struct WorkerPools {
+    pub enter: Option<WorkerPool>,
+    pub exit: Option<WorkerPool>,
+    pub update: Option<WorkerPool>,
+    pub quiet: bool,
+    pub dry_run: bool,
+    pub enter_count: u64,
+    pub exit_count: u64,
+    pub update_count: u64,
+}
+
+impl WorkerPools {
+    pub fn shutdown(&mut self) {
+        if let Some(p) = self.enter.as_mut() { p.shutdown(); }
+        if let Some(p) = self.exit.as_mut() { p.shutdown(); }
+        if let Some(p) = self.update.as_mut() { p.shutdown(); }
+    }
+}
+
+// (key, opaque_value) — key kept in state so exit can dispatch with it
+type HookState = (String, String);
+
+struct HookItem {
+    key: String,
+    value: String,
+}
+
+impl Lifecycle for HookItem {
+    type Key = String;
+    type State = HookState;
+    type Context = WorkerPools;
+    type Output = ();
+    type Error = EstoError;
+
+    fn key(&self) -> String { self.key.clone() }
+
+    fn enter(self, ctx: &mut WorkerPools, _: &mut ()) -> Result<HookState, EstoError> {
+        if !ctx.quiet {
+            eprintln!("[enter] {}", self.key);
+        }
+        ctx.enter_count += 1;
+        if !ctx.dry_run {
+            if let Some(pool) = ctx.enter.as_mut() {
+                pool.dispatch(format!("{}\t{}", self.key, self.value))?;
+            }
+        }
+        Ok((self.key, self.value))
+    }
+
+    fn reconcile_self(self, state: &mut HookState, ctx: &mut WorkerPools, _: &mut ()) -> Result<(), EstoError> {
+        if state.1 != self.value {
+            if !ctx.quiet {
+                eprintln!("[update] {} {:?} -> {:?}", self.key, state.1, self.value);
+            }
+            ctx.update_count += 1;
+            if !ctx.dry_run {
+                if let Some(pool) = ctx.update.as_mut() {
+                    pool.dispatch(format!("{}\t{}\t{}", self.key, state.1, self.value))?;
+                }
+            }
+            state.1 = self.value;
+        }
+        Ok(())
+    }
+
+    fn exit(state: HookState, ctx: &mut WorkerPools, _: &mut ()) -> Result<(), EstoError> {
+        if !ctx.quiet {
+            eprintln!("[exit] {}", state.0);
+        }
+        ctx.exit_count += 1;
+        if !ctx.dry_run {
+            if let Some(pool) = ctx.exit.as_mut() {
+                pool.dispatch(format!("{}\t{}", state.0, state.1))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn run_command_for_pairs(cmd: &str) -> Result<Vec<HookItem>, EstoError> {
+    let output = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        return Err(EstoError::CommandFailed {
+            cmd: cmd.to_string(),
+            detail: format!("exited with {}", output.status),
+        });
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut items = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        match line.splitn(2, '\t').collect::<Vec<_>>().as_slice() {
+            [key, value] => items.push(HookItem { key: (*key).to_string(), value: (*value).to_string() }),
+            [key] => items.push(HookItem { key: (*key).to_string(), value: String::new() }),
+            _ => {}
+        }
+    }
+    Ok(items)
+}
+
+pub struct ReconcileConfig {
+    pub from: Option<String>,
+    pub to: String,
+    pub enter: Option<String>,
+    pub exit: Option<String>,
+    pub update: Option<String>,
+    pub rate_limit: Option<Duration>,
+    pub reingest_every: Option<u64>,
+    /// Run one reconcile cycle then exit. --from (if given) seeds current state.
+    pub once: bool,
+    /// Keep a single long-lived worker process per hook type (stdin/stdout protocol).
+    /// Default (false): spawn a fresh process per item; exit code 0 = success.
+    pub stateful: bool,
+    /// Suppress per-event stderr log lines.
+    pub quiet: bool,
+    /// Compute the diff and print it without dispatching any workers.
+    pub dry_run: bool,
+}
+
+fn make_pools(config: &ReconcileConfig) -> WorkerPools {
+    WorkerPools {
+        enter: config.enter.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        exit: config.exit.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        update: config.update.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        quiet: config.quiet,
+        dry_run: config.dry_run,
+        enter_count: 0,
+        exit_count: 0,
+        update_count: 0,
+    }
+}
+
+fn seed_from(cmd: &str) -> Result<Vec<(String, HookState)>, EstoError> {
+    let from_items = run_command_for_pairs(cmd)?;
+    Ok(from_items.into_iter().map(|item| {
+        let key = item.key.clone();
+        (key.clone(), (key, item.value))
+    }).collect())
+}
+
+pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
+    let mut pools = make_pools(&config);
+
+    if config.once {
+        let initial = match &config.from {
+            Some(cmd) => seed_from(cmd)?,
+            None => vec![],
+        };
+        let mut set = OptativeSet::with_initial_state(initial);
+        let to_items = run_command_for_pairs(&config.to)?;
+        let errors = set.reconcile(to_items, &mut pools, &mut ());
+        for (key, err) in &errors {
+            tracing::error!(key = %key, error = %err, "lifecycle error");
+        }
+        let unchanged = (set.iter().count() as u64)
+            .saturating_sub(pools.enter_count)
+            .saturating_sub(pools.update_count);
+        if !pools.quiet {
+            eprintln!(
+                "reconciled: {} enter, {} update, {} exit ({} unchanged)",
+                pools.enter_count, pools.update_count, pools.exit_count, unchanged
+            );
+        }
+        pools.shutdown();
+        return Ok(());
+    }
+
+    let mut set: OptativeSet<HookItem> = match &config.from {
+        Some(cmd) => OptativeSet::with_initial_state(seed_from(cmd)?),
+        None => OptativeSet::new(),
+    };
+    let mut step: u64 = 0;
+
+    loop {
+        let to_items = run_command_for_pairs(&config.to)?;
+        let errors = set.reconcile(to_items, &mut pools, &mut ());
+        for (key, err) in errors {
+            tracing::error!(key = %key, error = %err, "lifecycle error");
+        }
+
+        step += 1;
+        if let Some(n) = config.reingest_every {
+            if step % n == 0 {
+                if let Some(cmd) = &config.from {
+                    set = OptativeSet::with_initial_state(seed_from(cmd)?);
+                }
+            }
+        }
+
+        if let Some(rate_limit) = config.rate_limit {
+            thread::sleep(rate_limit);
+        }
+    }
+}
