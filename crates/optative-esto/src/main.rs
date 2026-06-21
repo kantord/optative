@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use clap::Parser;
-use optative_esto::{ReconcileConfig, run};
+use optative_esto::{ReconcileConfig, run, run_file};
 use tracing_subscriber;
 
 #[derive(Parser)]
@@ -97,6 +97,37 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 
 fn main() {
     tracing_subscriber::fmt::init();
+
+    // Intercept `esto run [--dry-run] [--quiet] <file>` before clap sees the args,
+    // so the existing flat flag interface stays backward-compatible.
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(|s| s == "run").unwrap_or(false) {
+        let rest = &raw[1..];
+        let mut dry_run = false;
+        let mut quiet = false;
+        let mut file: Option<String> = None;
+        for arg in rest {
+            match arg.as_str() {
+                "--dry-run" => dry_run = true,
+                "--quiet" => quiet = true,
+                _ if !arg.starts_with('-') => file = Some(arg.clone()),
+                other => {
+                    eprintln!("esto run: unknown flag {other}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        let file = file.unwrap_or_else(|| {
+            eprintln!("esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>");
+            std::process::exit(1);
+        });
+        if let Err(e) = run_file(&file, dry_run, quiet) {
+            eprintln!("esto run: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let cli = Cli::parse();
 
     if cli.enter.is_none() && cli.exit.is_none() && cli.update.is_none() && !cli.dry_run {
