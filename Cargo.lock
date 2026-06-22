@@ -345,6 +345,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "esto"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "optative",
+ "optative-process-pool",
+ "oxc_allocator",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_resolver",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "rquickjs",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fast-glob"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -709,28 +731,6 @@ dependencies = [
  "syn",
  "tracing",
  "tracing-test",
-]
-
-[[package]]
-name = "optative-esto"
-version = "0.0.1"
-dependencies = [
- "clap",
- "optative",
- "optative-process-pool",
- "oxc_allocator",
- "oxc_codegen",
- "oxc_parser",
- "oxc_resolver",
- "oxc_semantic",
- "oxc_span",
- "oxc_transformer",
- "rquickjs",
- "sha2",
- "tempfile",
- "thiserror",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

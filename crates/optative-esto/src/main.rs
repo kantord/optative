@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use clap::Parser;
-use optative_esto::{ReconcileConfig, run, run_file};
+use esto::{ReconcileConfig, run, run_file};
 use tracing_subscriber;
 
 #[derive(Parser)]
