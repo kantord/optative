@@ -7,7 +7,7 @@ use rquickjs::promise::MaybePromise;
 use rquickjs::{Array, Context, Ctx, FromJs, Module, Object, Runtime, Value};
 use sha2::{Digest, Sha256};
 
-use crate::jsx::transform_jsx;
+use crate::jsx::transform_source;
 
 const ESTO_JS: &str = include_str!("js/esto.mjs");
 
@@ -72,8 +72,10 @@ impl Loader for EstoLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
         let source =
             std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
-        let source = if name.ends_with(".jsx") {
-            transform_jsx(&source)
+        let source = if name.ends_with(".jsx") || name.ends_with(".tsx")
+            || name.ends_with(".ts") || name.ends_with(".mts")
+        {
+            transform_source(&source, name)
         } else {
             source
         };
@@ -381,7 +383,10 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
         crate::EstoError::WorkerError("non-UTF8 file path".into())
     })?
     .to_string();
-    let is_jsx = path_str.ends_with(".jsx");
+    // .jsx / .tsx / .op.jsx / .op.tsx → Tier 2/3 (JSX tree); plain .mjs / .ts → Tier 1
+    let needs_transform = path_str.ends_with(".jsx") || path_str.ends_with(".tsx")
+        || path_str.ends_with(".ts") || path_str.ends_with(".mts");
+    let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
 
     let runtime = Runtime::new().map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
     runtime.set_loader(
@@ -450,10 +455,10 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                 format!("{hash:x}")
             })?)?;
 
-            // Load user module (transform .jsx if needed)
+            // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)
                 .map_err(|_| rquickjs::Error::new_loading(&path_str))?;
-            let src = if is_jsx { transform_jsx(&src) } else { src };
+            let src = if needs_transform { transform_source(&src, &path_str) } else { src };
             let module = Module::declare(ctx.clone(), path_str.clone(), src)?;
             let (module, promise) = module.eval()?;
             promise.finish::<()>()?;

@@ -122,6 +122,21 @@ fn grounding_dry_run_exits_with_delta_and_writes_nothing() {
     assert!(!dir.path().join(".esto").exists(), "dry-run should not create .esto/");
 }
 
+#[test]
+fn grounding_op_tsx_creates_task_files() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let status = esto()
+        .args(["run", &example("grounding.op.tsx")])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "esto run grounding.op.tsx should exit 0");
+    assert!(dir.path().join("tasks/foo.md").exists(), "tasks/foo.md should be created");
+    assert!(dir.path().join("tasks/bar.md").exists(), "tasks/bar.md should be created");
+}
+
 // ── TSV CLI (--to / --from / --once / --fail-on-change) ─────────────────────
 
 #[test]

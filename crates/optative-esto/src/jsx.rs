@@ -7,9 +7,13 @@ use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
 use oxc_transformer::{JsxOptions, JsxRuntime, TransformOptions, Transformer};
 
-pub fn transform_jsx(source: &str) -> String {
+/// Transform a JSX/TSX/TS source file to plain JS.
+/// `path` is used to infer the source type (.jsx/.tsx/.ts/.mjs etc.); it does not need to exist.
+pub fn transform_source(source: &str, path: &str) -> String {
+    let source_type = SourceType::from_path(path).unwrap_or_else(|_| SourceType::jsx());
+    let has_jsx = source_type.is_jsx();
+
     let allocator = Allocator::default();
-    let source_type = SourceType::jsx();
     let ret = Parser::new(&allocator, source, source_type).parse();
     let mut program = ret.program;
 
@@ -20,19 +24,28 @@ pub fn transform_jsx(source: &str) -> String {
         .into_scoping();
 
     let options = TransformOptions {
-        jsx: JsxOptions {
-            runtime: JsxRuntime::Classic,
-            pragma: Some("h".to_string()),
-            pragma_frag: Some("Fragment".to_string()),
-            ..JsxOptions::enable()
+        jsx: if has_jsx {
+            JsxOptions {
+                runtime: JsxRuntime::Classic,
+                pragma: Some("h".to_string()),
+                pragma_frag: Some("Fragment".to_string()),
+                ..JsxOptions::enable()
+            }
+        } else {
+            JsxOptions::default()
         },
         ..TransformOptions::default()
     };
 
-    Transformer::new(&allocator, Path::new("input.jsx"), &options)
+    Transformer::new(&allocator, Path::new(path), &options)
         .build_with_scoping(scoping, &mut program);
 
     Codegen::new().build(&program).code
+}
+
+// Keep for existing tests and callers that don't have a path.
+pub fn transform_jsx(source: &str) -> String {
+    transform_source(source, "input.jsx")
 }
 
 #[cfg(test)]
@@ -57,5 +70,31 @@ mod tests {
         let out = transform_jsx(r#"<A />"#);
         assert!(!out.contains("_jsx"), "should not contain _jsx, got: {out}");
         assert!(out.contains("h("), "expected h(), got: {out}");
+    }
+
+    #[test]
+    fn tsx_strips_type_annotations() {
+        let out = transform_source(
+            r#"const x: number = 42; const el = <Foo bar="baz" />;"#,
+            "input.tsx",
+        );
+        assert!(!out.contains(": number"), "type annotation should be stripped");
+        assert!(out.contains("h("), "JSX should be transformed to h()");
+    }
+
+    #[test]
+    fn ts_strips_type_annotations_no_jsx() {
+        let out = transform_source(
+            r#"const x: number = 42; export default x;"#,
+            "input.ts",
+        );
+        assert!(!out.contains(": number"), "type annotation should be stripped");
+    }
+
+    #[test]
+    fn op_tsx_extension_recognized() {
+        let out = transform_source(r#"const n: number = 1; const el = <A />;"#, "foo.op.tsx");
+        assert!(!out.contains(": number"), "type annotation should be stripped");
+        assert!(out.contains("h("), "JSX should be transformed");
     }
 }
