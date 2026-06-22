@@ -265,6 +265,8 @@ pub struct ReconcileConfig {
     pub quiet: bool,
     /// Compute the diff and print it without dispatching any workers.
     pub dry_run: bool,
+    /// Exit nonzero if any delta (enter/update/exit) occurred. For CI: verify system is already in desired state.
+    pub fail_on_change: bool,
 }
 
 fn make_pools(config: &ReconcileConfig) -> WorkerPools {
@@ -312,6 +314,10 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
             );
         }
         pools.shutdown();
+        let delta = pools.enter_count + pools.update_count + pools.exit_count;
+        if config.fail_on_change && delta > 0 {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 

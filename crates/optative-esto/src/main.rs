@@ -75,6 +75,10 @@ struct Cli {
     /// Show what would happen without dispatching any workers.
     #[arg(long)]
     dry_run: bool,
+
+    /// Exit 1 if any delta (enter/update/exit) fired. For CI: assert system is already converged.
+    #[arg(long)]
+    fail_on_change: bool,
 }
 
 fn parse_duration(s: &str) -> Result<Duration, String> {
@@ -130,8 +134,10 @@ fn main() {
 
     let cli = Cli::parse();
 
-    if cli.enter.is_none() && cli.exit.is_none() && cli.update.is_none() && !cli.dry_run {
-        eprintln!("esto: at least one of --enter, --exit, --update is required (or use --dry-run)");
+    if cli.enter.is_none() && cli.exit.is_none() && cli.update.is_none()
+        && !cli.dry_run && !cli.fail_on_change
+    {
+        eprintln!("esto: at least one of --enter, --exit, --update is required (or use --dry-run / --fail-on-change)");
         std::process::exit(1);
     }
 
@@ -147,6 +153,7 @@ fn main() {
         stateful: cli.stateful,
         quiet: cli.quiet,
         dry_run: cli.dry_run,
+        fail_on_change: cli.fail_on_change,
     };
 
     if let Err(e) = run(config) {
