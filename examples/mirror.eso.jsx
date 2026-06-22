@@ -10,20 +10,18 @@
  *   esto run examples/mirror.eso.jsx
  */
 
-import { h, defineTarget, sh } from 'esto'
-import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { h, defineTarget, sh, exists, read, ls, hash } from 'esto'
 
-const sig = (s) => createHash('sha256').update(s).digest('hex').slice(0, 8)
+const sig = (s) => hash(s).slice(0, 8)
 const write = (i) => sh`mkdir -p out && printf 'sig=%s\ncontent=%s\n' ${i.sig} ${i.content} > out/${i.name}.txt`
 
 // Kind: no desired() — desired items come from JSX leaf instances (<File ...props />)
 const File = defineTarget({
   key:   (i) => i.name,
   value: (i) => i.sig,
-  observe: () => existsSync('out')
-    ? readdirSync('out').filter(f => f.endsWith('.txt')).map(f => {
-        const m = readFileSync(`out/${f}`, 'utf8').match(/^sig=(.*)$/m)
+  observe: () => exists('out')
+    ? ls('out').filter(f => f.endsWith('.txt')).map(f => {
+        const m = read(`out/${f}`).match(/^sig=(.*)$/m)
         return { name: f.slice(0, -4), sig: m ? m[1] : '' }
       })
     : [],
@@ -34,7 +32,7 @@ const File = defineTarget({
 
 // Component: returns an array of <File /> instances (one per manifest line)
 const Manifest = () => {
-  const text = existsSync('manifest.txt') ? readFileSync('manifest.txt', 'utf8') : ''
+  const text = exists('manifest.txt') ? read('manifest.txt') : ''
   return text.split('\n').map(l => l.trim()).filter(l => l.includes('=')).map(l => {
     const eq = l.indexOf('=')
     const name = l.slice(0, eq).trim()

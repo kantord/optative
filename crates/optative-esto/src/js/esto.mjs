@@ -39,3 +39,18 @@ export function sh(strings, ...values) {
   }
   return globalThis.__sh_exec(cmd)
 }
+
+// ── Owned read-only I/O (in-process, no forking) ─────────────────────────────
+// Writes go through sh. Importing node:fs / node:crypto is not supported.
+
+/** Returns true if path exists. */
+export const exists = (path) => globalThis.__esto_exists(path)
+
+/** Returns file contents as a string. Throws if the file is missing. */
+export const read   = (path) => globalThis.__esto_read(path)
+
+/** Returns filenames in dir as a string[]. Returns [] if dir is missing. */
+export const ls     = (dir)  => JSON.parse(globalThis.__esto_ls_json(dir))
+
+/** Returns hex SHA-256 of the input string. */
+export const hash   = (input) => globalThis.__esto_hash(input)

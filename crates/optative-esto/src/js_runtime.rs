@@ -11,30 +11,6 @@ use crate::jsx::transform_source;
 
 const ESTO_JS: &str = include_str!("js/esto.mjs");
 
-// Built-in shims for Node.js modules used in user files.
-// Native operations are exposed as globals (__fs_*, __crypto_*) and wrapped here.
-const NODE_FS_JS: &str = r#"
-export const existsSync = (path) => globalThis.__fs_exists(path)
-export const readFileSync = (path, _enc) => globalThis.__fs_read(path)
-export const readdirSync = (path) => JSON.parse(globalThis.__fs_readdir_json(path))
-export const mkdirSync = (path, opts) => globalThis.__fs_mkdir(path, !!(opts && opts.recursive))
-export const writeFileSync = (path, data) => globalThis.__fs_write(path, data)
-"#;
-
-const NODE_CRYPTO_JS: &str = r#"
-export function createHash(_algo) {
-  const chunks = []
-  return {
-    update(data) { chunks.push(typeof data === 'string' ? data : String(data)); return this },
-    digest(fmt) {
-      const s = chunks.join('')
-      if (fmt === 'hex') return globalThis.__crypto_sha256_hex(s)
-      throw new Error('esto: unsupported digest format: ' + fmt)
-    }
-  }
-}
-"#;
-
 // ── resolver: relative imports from user file's directory ────────────────────
 
 struct EstoResolver {
@@ -391,17 +367,11 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
     let runtime = Runtime::new().map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
     runtime.set_loader(
         (
-            BuiltinResolver::default()
-                .with_module("esto")
-                .with_module("node:fs")
-                .with_module("node:crypto"),
+            BuiltinResolver::default().with_module("esto"),
             EstoResolver { base_dir },
         ),
         (
-            BuiltinLoader::default()
-                .with_module("esto", ESTO_JS)
-                .with_module("node:fs", NODE_FS_JS)
-                .with_module("node:crypto", NODE_CRYPTO_JS),
+            BuiltinLoader::default().with_module("esto", ESTO_JS),
             EstoLoader,
         ),
     );
@@ -423,34 +393,22 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
             })?;
             ctx.globals().set("__sh_exec", sh_fn)?;
 
-            // Register node:fs native functions
-            ctx.globals().set("__fs_exists", Function::new(ctx.clone(), |path: String| {
+            // Owned esto I/O API (read-only; writes go through sh)
+            ctx.globals().set("__esto_exists", Function::new(ctx.clone(), |path: String| {
                 Path::new(&path).exists()
             })?)?;
-            ctx.globals().set("__fs_read", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
+            ctx.globals().set("__esto_read", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
                 std::fs::read_to_string(&path).map_err(|_| rquickjs::Error::Unknown)
             })?)?;
-            ctx.globals().set("__fs_readdir_json", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
-                let entries: Vec<String> = std::fs::read_dir(&path)
-                    .map_err(|_| rquickjs::Error::Unknown)?
-                    .filter_map(|e| e.ok())
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .collect();
-                Ok(serde_json_simple_array(&entries))
+            ctx.globals().set("__esto_ls_json", Function::new(ctx.clone(), |dir: String| -> String {
+                let entries: Vec<String> = std::fs::read_dir(&dir)
+                    .map(|rd| rd.filter_map(|e| e.ok())
+                        .filter_map(|e| e.file_name().into_string().ok())
+                        .collect())
+                    .unwrap_or_default();
+                serde_json_simple_array(&entries)
             })?)?;
-            ctx.globals().set("__fs_mkdir", Function::new(ctx.clone(), |path: String, recursive: bool| {
-                if recursive {
-                    let _ = std::fs::create_dir_all(&path);
-                } else {
-                    let _ = std::fs::create_dir(&path);
-                }
-            })?)?;
-            ctx.globals().set("__fs_write", Function::new(ctx.clone(), |path: String, data: String| {
-                let _ = std::fs::write(&path, data);
-            })?)?;
-
-            // Register node:crypto native functions
-            ctx.globals().set("__crypto_sha256_hex", Function::new(ctx.clone(), |data: String| {
+            ctx.globals().set("__esto_hash", Function::new(ctx.clone(), |data: String| {
                 let hash = Sha256::digest(data.as_bytes());
                 format!("{hash:x}")
             })?)?;

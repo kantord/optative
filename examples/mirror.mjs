@@ -12,8 +12,7 @@
  *   esto run --dry-run mirror.mjs     # shows diff without writing; exit = delta count
  */
 
-import { defineTarget, sh } from 'esto'
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { defineTarget, sh, read, ls, exists } from 'esto'
 
 const write = (i) => sh`mkdir -p out && printf '%s\n' ${i.content} > out/${i.name}.txt`
 
@@ -22,7 +21,7 @@ export default defineTarget({
   value: (i) => i.content,
 
   desired: () => {
-    const text = readFileSync('manifest.txt', 'utf8')
+    const text = read('manifest.txt')
     return text.trim().split('\n').filter(Boolean).map(line => {
       const eq = line.indexOf('=')
       return eq === -1
@@ -32,12 +31,12 @@ export default defineTarget({
   },
 
   observe: () => {
-    if (!existsSync('out')) return []
-    return readdirSync('out')
+    if (!exists('out')) return []
+    return ls('out')
       .filter(f => f.endsWith('.txt'))
       .map(f => ({
         name: f.slice(0, -4),
-        content: readFileSync(`out/${f}`, 'utf8').trim(),
+        content: read(`out/${f}`).trim(),
       }))
   },
 
