@@ -241,6 +241,56 @@ user component).
 Down the tree: context + the act of reconciling children. Up: `Outcome`. Sideways: nothing but the
 shared world. (See `agentic-codebase-substrate.md` §"Interfaces & composition".)
 
+## Context & prompt grounding
+
+A prompt generated deep in the tree needs grounding — *what repo, what package, what conventions*.
+That is **the down-channel** the tree already has (context flows down, `Outcome` up); we just make it
+author-facing and aim it at prompts. It is **React Context, scoped to prompts.**
+
+Two kinds of context flow down, accumulated **top-down (general → specific)** at the point a prompt
+is generated:
+
+- **Structural — automatic.** cwd (from `<Dir path>`), the key/path chain, the kind. Short; the tree
+  already knows it; **inline** it. The author never writes "we're in packages/core/src/insane.tsx."
+- **Semantic — authored.** A `context=` prop (a.k.a. `data-context`) of *prose* ("packages/core is the
+  ONLY published package; zero runtime deps; named exports only"). May be a literal **or computed from
+  props** (`context={pkgSummary(name)}`) — it's just a JSX expression.
+
+A prompt at node X is **auto-prepended** with the accumulated chain (root → … → X), then the node's own
+prompt. Declared once per scope, inherited by everything beneath — the second payoff of nesting (the
+first being dependency/ordering).
+
+### Heavy/shared context → content-addressed files (read once)
+To avoid re-inlining long prose into every prompt of a fan-out, materialize a semantic context entry
+**once** to a **content-addressed** file and reference it by path:
+
+```
+.esto/context/<sha256(content)>.md      # gitignored, idempotent, pruned per run
+```
+
+Content-addressing is what makes "already seen it" real: identical context → identical path, so the
+repo-level blurb shared by 40 prompts is **one** file, written once, referenced 40 times. A prompt then
+carries `path + a one-line summary`, not the body:
+
+```
+Context (read once; same id across tasks = same content):
+  .esto/context/ab12.md — insane-forms repo conventions
+  .esto/context/9f3c.md — packages/core: published, zero-dep
+Task: add a concise JSDoc to `field` …
+```
+
+The dedup pays off best under the **one-orchestrator-fans-out** model: the orchestrator loads each
+context file once and recognizes the same id across every sub-task (prompt-cache-friendly). Rule of
+thumb: **inline short + always-needed; content-addressed-ref for long + shared.**
+
+It's one consumer of a general context map: `context` (prose) is the key *prompt generation* reads; cwd
+is the key `sh` reads; an agent pool is the key dispatch reads — one channel, several consumers.
+
+**Open:** dedup at the orchestrator (deterministic) vs relying on the agent to recognize the id; the
+inline-vs-ref threshold; single-string `context=` vs typed providers (React-Context-style); a token
+budget / priority when the chain gets long (append by default, allow a node to *override* rather than
+only append).
+
 ## Cost & prioritization (per-node-type concurrency)
 
 The footgun is putting expensive work in per-item hooks (a `value` that spawns a network call per
