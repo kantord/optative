@@ -1,3 +1,6 @@
+pub mod jsx;
+pub mod js_runtime;
+
 use std::io::{BufRead, Write as IoWrite};
 use std::process::Stdio;
 use std::sync::mpsc;
@@ -7,44 +10,8 @@ use std::time::Duration;
 use optative::{Lifecycle, OptativeSet};
 use optative::reconcile::Reconcile;
 
-const ESTO_MJS: &str = include_str!("js/esto.mjs");
-const LOADER_MJS: &str = include_str!("js/loader.mjs");
-const RUNNER_MJS: &str = include_str!("js/runner.mjs");
-
 pub fn run_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), EstoError> {
-    let tmp = std::env::temp_dir().join(format!("esto-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp)?;
-
-    let esto_path = tmp.join("esto.mjs");
-    let loader_path = tmp.join("loader.mjs");
-    let runner_path = tmp.join("runner.mjs");
-
-    std::fs::write(&esto_path, ESTO_MJS)?;
-    std::fs::write(&loader_path, LOADER_MJS)?;
-    std::fs::write(&runner_path, RUNNER_MJS)?;
-
-    let abs_file = std::fs::canonicalize(file)?;
-    let esto_url = format!("file://{}", esto_path.display());
-
-    let status = std::process::Command::new("node")
-        .arg("--experimental-loader")
-        .arg(&loader_path)
-        .arg(&runner_path)
-        .arg(&abs_file)
-        .env("ESTO_RUNTIME_URL", &esto_url)
-        .env("ESTO_DRY_RUN", if dry_run { "1" } else { "0" })
-        .env("ESTO_QUIET", if quiet { "1" } else { "0" })
-        .env("NODE_NO_WARNINGS", "1")
-        .status()?;
-
-    let _ = std::fs::remove_dir_all(&tmp);
-
-    if let Some(code) = status.code() {
-        if code != 0 {
-            std::process::exit(code);
-        }
-    }
-    Ok(())
+    js_runtime::run_esto_file(file, dry_run, quiet)
 }
 
 #[derive(Debug, thiserror::Error)]
