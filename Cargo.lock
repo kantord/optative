@@ -727,6 +727,7 @@ dependencies = [
  "oxc_transformer",
  "rquickjs",
  "sha2",
+ "tempfile",
  "thiserror",
  "tracing",
  "tracing-subscriber",

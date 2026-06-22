@@ -220,6 +220,20 @@ impl Lifecycle for HookItem {
     }
 }
 
+fn parse_tsv_lines(text: &str) -> Vec<HookItem> {
+    let mut items = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        match line.splitn(2, '\t').collect::<Vec<_>>().as_slice() {
+            [key, value] => items.push(HookItem { key: (*key).to_string(), value: (*value).to_string() }),
+            [key] => items.push(HookItem { key: (*key).to_string(), value: String::new() }),
+            _ => {}
+        }
+    }
+    items
+}
+
 fn run_command_for_pairs(cmd: &str) -> Result<Vec<HookItem>, EstoError> {
     let output = std::process::Command::new("sh")
         .args(["-c", cmd])
@@ -235,17 +249,7 @@ fn run_command_for_pairs(cmd: &str) -> Result<Vec<HookItem>, EstoError> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let mut items = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        match line.splitn(2, '\t').collect::<Vec<_>>().as_slice() {
-            [key, value] => items.push(HookItem { key: (*key).to_string(), value: (*value).to_string() }),
-            [key] => items.push(HookItem { key: (*key).to_string(), value: String::new() }),
-            _ => {}
-        }
-    }
-    Ok(items)
+    Ok(parse_tsv_lines(&text))
 }
 
 pub struct ReconcileConfig {
@@ -298,7 +302,7 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
             Some(cmd) => seed_from(cmd)?,
             None => vec![],
         };
-        let mut set = OptativeSet::with_initial_state(initial);
+        let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let to_items = run_command_for_pairs(&config.to)?;
         let errors = set.reconcile(to_items, &mut pools, &mut ());
         for (key, err) in &errors {
@@ -346,5 +350,111 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
         if let Some(rate_limit) = config.rate_limit {
             thread::sleep(rate_limit);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_tsv_lines, HookItem, WorkerPools};
+    use optative::{OptativeSet};
+    use optative::reconcile::Reconcile;
+
+    fn dry_pools() -> WorkerPools {
+        WorkerPools {
+            enter: None, exit: None, update: None,
+            quiet: true, dry_run: true,
+            enter_count: 0, exit_count: 0, update_count: 0,
+        }
+    }
+
+    // ── parse_tsv_lines ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tsv_key_value_pair() {
+        let items = parse_tsv_lines("foo\tbar");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "foo");
+        assert_eq!(items[0].value, "bar");
+    }
+
+    #[test]
+    fn tsv_key_only_gives_empty_value() {
+        let items = parse_tsv_lines("foo");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "foo");
+        assert_eq!(items[0].value, "");
+    }
+
+    #[test]
+    fn tsv_skips_blank_lines_and_comments() {
+        let items = parse_tsv_lines("\n# comment\n\nfoo\tbar\n");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "foo");
+    }
+
+    #[test]
+    fn tsv_parses_multiple_lines() {
+        let items = parse_tsv_lines("a\tv1\nb\tv2\n");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].key, "a");
+        assert_eq!(items[0].value, "v1");
+        assert_eq!(items[1].key, "b");
+        assert_eq!(items[1].value, "v2");
+    }
+
+    #[test]
+    fn tsv_trims_leading_trailing_whitespace_on_line() {
+        let items = parse_tsv_lines("  foo\tbar  ");
+        // The line is trimmed before splitting, so key = "foo", value = "bar  "
+        assert_eq!(items[0].key, "foo");
+    }
+
+    // ── reconcile counting ───────────────────────────────────────────────────
+
+    #[test]
+    fn reconcile_new_item_increments_enter() {
+        let mut set: OptativeSet<HookItem> = OptativeSet::new();
+        let mut pools = dry_pools();
+        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v".into() }], &mut pools, &mut ());
+        assert!(errors.is_empty());
+        assert_eq!(pools.enter_count, 1);
+        assert_eq!(pools.exit_count, 0);
+        assert_eq!(pools.update_count, 0);
+    }
+
+    #[test]
+    fn reconcile_removed_item_increments_exit() {
+        let initial = vec![(String::from("k"), (String::from("k"), String::from("v")))];
+        let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
+        let mut pools = dry_pools();
+        let errors = set.reconcile(vec![], &mut pools, &mut ());
+        assert!(errors.is_empty());
+        assert_eq!(pools.exit_count, 1);
+        assert_eq!(pools.enter_count, 0);
+        assert_eq!(pools.update_count, 0);
+    }
+
+    #[test]
+    fn reconcile_changed_value_increments_update() {
+        let initial = vec![(String::from("k"), (String::from("k"), String::from("v1")))];
+        let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
+        let mut pools = dry_pools();
+        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v2".into() }], &mut pools, &mut ());
+        assert!(errors.is_empty());
+        assert_eq!(pools.update_count, 1);
+        assert_eq!(pools.enter_count, 0);
+        assert_eq!(pools.exit_count, 0);
+    }
+
+    #[test]
+    fn reconcile_unchanged_value_no_update() {
+        let initial = vec![(String::from("k"), (String::from("k"), String::from("v")))];
+        let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
+        let mut pools = dry_pools();
+        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v".into() }], &mut pools, &mut ());
+        assert!(errors.is_empty());
+        assert_eq!(pools.update_count, 0);
+        assert_eq!(pools.enter_count, 0);
+        assert_eq!(pools.exit_count, 0);
     }
 }
