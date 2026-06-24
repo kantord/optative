@@ -255,6 +255,29 @@ export default () => (
     assert!(dir.path().join("owned/orphan.txt").exists(), "dry-run should not delete anything");
 }
 
+// ── esto types ───────────────────────────────────────────────────────────────
+
+#[test]
+fn types_writes_dts_with_module_declarations() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let status = esto()
+        .args(["types", "--out", dir.path().to_str().unwrap()])
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "esto types should exit 0");
+
+    let dts = fs::read_to_string(dir.path().join("esto.d.ts")).unwrap();
+    assert!(dts.contains("declare module \"esto\""), "esto.d.ts should contain esto module");
+    assert!(dts.contains("declare module \"esto/fs\""), "esto.d.ts should contain esto/fs module");
+    assert!(dts.contains("declare namespace JSX"), "esto.d.ts should declare JSX namespace");
+    assert!(dts.contains("export function h("), "esto module should export h()");
+    assert!(dts.contains("export function unit"), "esto module should export unit");
+    assert!(dts.contains("export function exists"), "esto module should export exists");
+    assert!(dts.contains("export function GitRepo"), "esto/fs module should export GitRepo");
+}
+
 // ── TSV CLI (--to / --from / --once / --fail-on-change) ─────────────────────
 
 #[test]

@@ -1,6 +1,7 @@
 pub mod jsx;
 pub mod js_runtime;
 pub mod watch;
+pub mod types;
 
 use std::io::{BufRead, Write as IoWrite};
 use std::process::Stdio;

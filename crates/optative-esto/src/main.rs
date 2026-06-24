@@ -159,6 +159,38 @@ fn main() {
         return;
     }
 
+    if raw.first().map(|s| s == "types").unwrap_or(false) {
+        let mut out_dir = std::path::PathBuf::from(".");
+        let rest = &raw[1..];
+        let mut args_iter = rest.iter();
+        while let Some(arg) = args_iter.next() {
+            match arg.as_str() {
+                "--out" => {
+                    let val = args_iter.next().unwrap_or_else(|| {
+                        eprintln!("esto types: --out requires a directory path");
+                        std::process::exit(1);
+                    });
+                    out_dir = std::path::PathBuf::from(val);
+                }
+                other => {
+                    eprintln!("esto types: unknown argument {other}\nUsage: esto types [--out <dir>]");
+                    std::process::exit(1);
+                }
+            }
+        }
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("esto types: could not create output directory: {e}");
+            std::process::exit(1);
+        }
+        let dest = out_dir.join("esto.d.ts");
+        if let Err(e) = std::fs::write(&dest, esto::types::ESTO_DTS) {
+            eprintln!("esto types: failed to write {}: {e}", dest.display());
+            std::process::exit(1);
+        }
+        eprintln!("esto types: wrote {}", dest.display());
+        return;
+    }
+
     if raw.first().map(|s| s == "run").unwrap_or(false) {
         let rest = &raw[1..];
         let mut dry_run = false;
