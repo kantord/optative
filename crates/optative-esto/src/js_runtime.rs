@@ -465,6 +465,11 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
             ctx.globals().set("__esto_is_dir", Function::new(ctx.clone(), |path: String| {
                 Path::new(&path).is_dir()
             })?)?;
+            ctx.globals().set("__esto_cwd", Function::new(ctx.clone(), || -> rquickjs::Result<String> {
+                std::env::current_dir()
+                    .map(|p| p.to_str().unwrap_or(".").to_owned())
+                    .map_err(|_| rquickjs::Error::Unknown)
+            })?)?;
 
             // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)

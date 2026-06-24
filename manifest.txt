@@ -1,2 +1,0 @@
-alpha=one
-beta=two
