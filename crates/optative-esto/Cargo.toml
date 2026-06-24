@@ -28,6 +28,8 @@ oxc_codegen = "0.137.0"
 oxc_span = "0.137.0"
 oxc_resolver = "11.21.3"
 sha2 = "0.10"
+notify = "6"
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

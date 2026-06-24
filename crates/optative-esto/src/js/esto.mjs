@@ -5,7 +5,7 @@ export const Context  = Symbol('esto.Context')
 export function h(type, props, ...children) {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   if (type === Fragment)          return { $fragment: true, children: kids }
-  if (type === Context)           return { $context: true, value: props?.value ?? null, children: kids }
+  if (type === Context)           return { $context: true, value: props?.value ?? null, data: props?.data != null ? JSON.stringify(props.data) : null, children: kids }
   if (type?.__estoKind)           return { $kind: type, item: { ...(props ?? {}) } }
   if (typeof type === 'function') return { $component: type, props: { ...(props ?? {}), children: kids } }
   throw new Error(`esto: invalid JSX node type: ${String(type)}`)
@@ -13,9 +13,9 @@ export function h(type, props, ...children) {
 
 let __nextKindId = 0
 
-// Tier 1 (target has desired()): identity — keep as-is for backward compat.
-// Tier 2 (no desired): kind descriptor; __estoId allows Rust to group leaves by kind identity.
-export function defineTarget(def) {
+// Tier 1 (unit has desired()): identity — keep as-is for Rust to detect Tier 1 path.
+// Tier 2/3 (no desired): stamps __estoKind + __estoId so Rust can group leaves by type.
+export function unit(def) {
   if (def.desired) return def
   return { __estoKind: true, __estoId: __nextKindId++, ...def }
 }
@@ -54,3 +54,13 @@ export const ls     = (dir)  => JSON.parse(globalThis.__esto_ls_json(dir))
 
 /** Returns hex SHA-256 of the input string. */
 export const hash   = (input) => globalThis.__esto_hash(input)
+
+// ── console shim — QuickJS has no built-in console ───────────────────────────
+const __fmt = (v) => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)
+const __print = (level, args) => globalThis.__console_print(level, args.map(__fmt).join(' '))
+globalThis.console = {
+  log:   (...a) => __print('log',   a),
+  error: (...a) => __print('error', a),
+  warn:  (...a) => __print('warn',  a),
+  debug: (...a) => __print('debug', a),
+}

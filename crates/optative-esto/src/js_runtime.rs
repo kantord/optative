@@ -8,8 +8,10 @@ use rquickjs::{Array, Context, Ctx, FromJs, Module, Object, Runtime, Value};
 use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
+use glob;
 
 const ESTO_JS: &str = include_str!("js/esto.mjs");
+const ESTO_FS_JS: &str = include_str!("js/esto_fs.mjs");
 
 // ── resolver: relative imports from user file's directory ────────────────────
 
@@ -75,7 +77,7 @@ fn sha12(s: &str) -> String {
     format!("{hash:x}")[..12].to_string()
 }
 
-fn emit_task(key: &str, context: &[String], body: &str) -> std::io::Result<()> {
+fn emit_task(key: &str, context: &[String], context_data: &[String], body: &str) -> std::io::Result<()> {
     std::fs::create_dir_all("tasks")?;
     std::fs::create_dir_all(".esto/context")?;
 
@@ -97,13 +99,26 @@ fn emit_task(key: &str, context: &[String], body: &str) -> std::io::Result<()> {
         .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
         .collect();
 
-    let content = if refs.is_empty() {
+    let mut sections: Vec<String> = Vec::new();
+    if !refs.is_empty() {
+        sections.push(format!(
+            "Context (read once; same id = same content):\n{}",
+            refs.join("\n")
+        ));
+    }
+    if !context_data.is_empty() {
+        let json = if context_data.len() == 1 {
+            context_data[0].clone()
+        } else {
+            format!("[{}]", context_data.join(","))
+        };
+        sections.push(format!("Structured context:\n```json\n{json}\n```"));
+    }
+
+    let content = if sections.is_empty() {
         format!("# {key}\n{body}\n")
     } else {
-        format!(
-            "# {key}\nContext (read once; same id = same content):\n{}\n\n{body}\n",
-            refs.join("\n")
-        )
+        format!("# {key}\n{}\n\n{body}\n", sections.join("\n\n"))
     };
 
     std::fs::write(format!("tasks/{safe}.md"), content)
@@ -114,10 +129,10 @@ fn await_val<'js, T: FromJs<'js>>(val: Value<'js>) -> rquickjs::Result<T> {
     MaybePromise::from_value(val).finish()
 }
 
-fn check_prompt(key: &str, context: &[String], val: Value) -> rquickjs::Result<()> {
+fn check_prompt(key: &str, context: &[String], context_data: &[String], val: Value) -> rquickjs::Result<()> {
     if let Some(obj) = val.as_object() {
         if let Ok(prompt_str) = obj.get::<_, String>("$prompt") {
-            emit_task(key, context, &prompt_str).map_err(|_| rquickjs::Error::Unknown)?;
+            emit_task(key, context, context_data, &prompt_str).map_err(|_| rquickjs::Error::Unknown)?;
         }
     }
     Ok(())
@@ -130,6 +145,7 @@ struct Leaf<'js> {
     kind: Object<'js>,
     item: Value<'js>,
     context: Vec<String>,
+    context_data: Vec<String>,
 }
 
 // ── reduce: walk a JSX tree to extract leaves ────────────────────────────────
@@ -138,6 +154,7 @@ fn reduce<'js>(
     ctx: &Ctx<'js>,
     node: Value<'js>,
     context: Vec<String>,
+    context_data: Vec<String>,
 ) -> rquickjs::Result<Vec<Leaf<'js>>> {
     if node.is_null() || node.is_undefined() {
         return Ok(vec![]);
@@ -151,7 +168,7 @@ fn reduce<'js>(
         let mut leaves = vec![];
         for i in 0..arr.len() {
             let child: Value = arr.get(i)?;
-            leaves.extend(reduce(ctx, child, context.clone())?);
+            leaves.extend(reduce(ctx, child, context.clone(), context_data.clone())?);
         }
         return Ok(leaves);
     }
@@ -163,7 +180,7 @@ fn reduce<'js>(
             let mut leaves = vec![];
             for i in 0..children.len() {
                 let child: Value = children.get(i)?;
-                leaves.extend(reduce(ctx, child, context.clone())?);
+                leaves.extend(reduce(ctx, child, context.clone(), context_data.clone())?);
             }
             return Ok(leaves);
         }
@@ -181,11 +198,20 @@ fn reduce<'js>(
             } else {
                 context.clone()
             };
+            let data_val: Value = obj.get("data").unwrap_or(Value::new_undefined(ctx.clone()));
+            let mut new_ctx_data = context_data.clone();
+            if !data_val.is_null() && !data_val.is_undefined() {
+                if let Some(s) = data_val.as_string() {
+                    if let Ok(s) = s.to_string() {
+                        new_ctx_data.push(s);
+                    }
+                }
+            }
             let children: Array = obj.get("children")?;
             let mut leaves = vec![];
             for i in 0..children.len() {
                 let child: Value = children.get(i)?;
-                leaves.extend(reduce(ctx, child, new_ctx.clone())?);
+                leaves.extend(reduce(ctx, child, new_ctx.clone(), new_ctx_data.clone())?);
             }
             return Ok(leaves);
         }
@@ -196,7 +222,7 @@ fn reduce<'js>(
             let comp_fn = comp_val.into_function().ok_or(rquickjs::Error::Unknown)?;
             let props: Value = obj.get("props")?;
             let result: Value = comp_fn.call::<(Value,), Value>((props,))?;
-            return reduce(ctx, result, context);
+            return reduce(ctx, result, context, context_data);
         }
 
         // $kind: kindObj — leaf node
@@ -205,7 +231,7 @@ fn reduce<'js>(
             let kind_obj = kind_val.into_object().ok_or(rquickjs::Error::Unknown)?;
             let kind_id: u32 = kind_obj.get("__estoId").unwrap_or(0);
             let item: Value = obj.get("item")?;
-            return Ok(vec![Leaf { kind_id, kind: kind_obj, item, context }]);
+            return Ok(vec![Leaf { kind_id, kind: kind_obj, item, context, context_data }]);
         }
     }
 
@@ -229,6 +255,7 @@ fn call_lifecycle<'js>(
     args: Vec<Value<'js>>,
     key: &str,
     context: &[String],
+    context_data: &[String],
     dry_run: bool,
     errors: &mut usize,
 ) {
@@ -268,7 +295,7 @@ fn call_lifecycle<'js>(
                 *errors += 1;
             }
             Ok(resolved) => {
-                if let Err(e) = check_prompt(key, context, resolved) {
+                if let Err(e) = check_prompt(key, context, context_data, resolved) {
                     eprintln!("[error] {key}: {e}");
                     *errors += 1;
                 }
@@ -304,23 +331,23 @@ fn reconcile_kind<'js>(
         current.insert(k, (item, v));
     }
 
-    // Build desired map: key_str → (item, value_str, context)
-    let mut desired: HashMap<String, (Value<'js>, String, Vec<String>)> = HashMap::new();
+    // Build desired map: key_str → (item, value_str, context, context_data)
+    let mut desired: HashMap<String, (Value<'js>, String, Vec<String>, Vec<String>)> = HashMap::new();
     for leaf in leaves {
         let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
         let v: String = value_fn.call::<(Value,), String>((leaf.item.clone(),))?;
-        desired.insert(k, (leaf.item, v, leaf.context));
+        desired.insert(k, (leaf.item, v, leaf.context, leaf.context_data));
     }
 
     // Enter + Update
-    for (k, (d_item, d_val, ctx_chain)) in &desired {
+    for (k, (d_item, d_val, ctx_chain, ctx_data)) in &desired {
         match current.get(k) {
             None => {
                 if !quiet {
                     eprintln!("[enter] {k}");
                 }
                 r.enter += 1;
-                call_lifecycle(ctx, kind, "enter", vec![d_item.clone()], k, ctx_chain, dry_run, &mut r.errors);
+                call_lifecycle(ctx, kind, "enter", vec![d_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
             }
             Some((c_item, c_val)) => {
                 if d_val != c_val {
@@ -328,7 +355,7 @@ fn reconcile_kind<'js>(
                         eprintln!("[update] {k}");
                     }
                     r.update += 1;
-                    call_lifecycle(ctx, kind, "update", vec![d_item.clone(), c_item.clone()], k, ctx_chain, dry_run, &mut r.errors);
+                    call_lifecycle(ctx, kind, "update", vec![d_item.clone(), c_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
                 } else {
                     r.unchanged += 1;
                 }
@@ -343,7 +370,7 @@ fn reconcile_kind<'js>(
                 eprintln!("[exit] {k}");
             }
             r.exit += 1;
-            call_lifecycle(ctx, kind, "exit", vec![c_item.clone()], k, &[], dry_run, &mut r.errors);
+            call_lifecycle(ctx, kind, "exit", vec![c_item.clone()], k, &[], &[], dry_run, &mut r.errors);
         }
     }
 
@@ -367,11 +394,11 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
     let runtime = Runtime::new().map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
     runtime.set_loader(
         (
-            BuiltinResolver::default().with_module("esto"),
+            BuiltinResolver::default().with_module("esto").with_module("esto/fs"),
             EstoResolver { base_dir },
         ),
         (
-            BuiltinLoader::default().with_module("esto", ESTO_JS),
+            BuiltinLoader::default().with_module("esto", ESTO_JS).with_module("esto/fs", ESTO_FS_JS),
             EstoLoader,
         ),
     );
@@ -412,6 +439,32 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                 let hash = Sha256::digest(data.as_bytes());
                 format!("{hash:x}")
             })?)?;
+            ctx.globals().set("__console_print", Function::new(ctx.clone(), |level: String, msg: String| {
+                eprintln!("[{level}] {msg}");
+            })?)?;
+
+            // esto/fs globals: real glob, git root, dir check
+            ctx.globals().set("__esto_glob", Function::new(ctx.clone(), |pattern: String| -> String {
+                let matches: Vec<String> = glob::glob(&pattern)
+                    .map(|paths| {
+                        paths.filter_map(|p| p.ok())
+                             .filter_map(|p| p.to_str().map(|s| s.to_owned()))
+                             .collect()
+                    })
+                    .unwrap_or_default();
+                serde_json_simple_array(&matches)
+            })?)?;
+            ctx.globals().set("__esto_git_root", Function::new(ctx.clone(), || -> rquickjs::Result<String> {
+                let out = std::process::Command::new("git")
+                    .args(["rev-parse", "--show-toplevel"])
+                    .output()
+                    .map_err(|_| rquickjs::Error::Unknown)?;
+                if !out.status.success() { return Err(rquickjs::Error::Unknown); }
+                Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+            })?)?;
+            ctx.globals().set("__esto_is_dir", Function::new(ctx.clone(), |path: String| {
+                Path::new(&path).is_dir()
+            })?)?;
 
             // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)
@@ -430,7 +483,7 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                     .into_function()
                     .ok_or(rquickjs::Error::Unknown)?;
                 let root: Value = root_fn.call::<(), Value>(())?;
-                reduce(&ctx, root, vec![])?
+                reduce(&ctx, root, vec![], vec![])?
             } else {
                 // Tier 1: default export is a target object with desired()
                 let target = default_val.into_object().ok_or(rquickjs::Error::Unknown)?;
@@ -441,7 +494,7 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                 let mut leaves = Vec::new();
                 for i in 0..desired_arr.len() {
                     let item: Value = desired_arr.get(i)?;
-                    leaves.push(Leaf { kind_id: 0, kind: target.clone(), item, context: vec![] });
+                    leaves.push(Leaf { kind_id: 0, kind: target.clone(), item, context: vec![], context_data: vec![] });
                 }
                 leaves
             };

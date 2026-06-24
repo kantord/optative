@@ -12,11 +12,11 @@
  *   esto run --dry-run mirror.mjs     # shows diff without writing; exit = delta count
  */
 
-import { defineTarget, sh, read, ls, exists } from 'esto'
+import { unit, sh, read, ls, exists } from 'esto'
 
 const write = (i) => sh`mkdir -p out && printf '%s\n' ${i.content} > out/${i.name}.txt`
 
-export default defineTarget({
+export default unit({
   key:   (i) => i.name,
   value: (i) => i.content,
 

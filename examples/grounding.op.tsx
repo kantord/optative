@@ -7,13 +7,13 @@
  * Usage: esto run examples/grounding.op.tsx
  */
 
-import { h, Context, defineTarget, prompt } from 'esto'
+import { h, Context, unit, prompt } from 'esto'
 
 interface DocProps {
   name: string
 }
 
-const Doc = defineTarget({
+const Doc = unit({
   key:     (i: DocProps) => i.name,
   value:   (_i: DocProps) => 'needs-doc',
   observe: (): DocProps[] => [],

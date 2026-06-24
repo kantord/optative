@@ -105,6 +105,60 @@ fn main() {
     // Intercept `esto run [--dry-run] [--quiet] <file>` before clap sees the args,
     // so the existing flat flag interface stays backward-compatible.
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(|s| s == "watch").unwrap_or(false) {
+        let rest = &raw[1..];
+        let mut dry_run = false;
+        let mut quiet = false;
+        let mut triggers: Vec<esto::watch::WatchTrigger> = Vec::new();
+        let mut interval: Option<Duration> = None;
+        let mut file: Option<String> = None;
+        let mut args_iter = rest.iter();
+        while let Some(arg) = args_iter.next() {
+            match arg.as_str() {
+                "--dry-run" => dry_run = true,
+                "--quiet" => quiet = true,
+                "--on" => {
+                    let val = args_iter.next().unwrap_or_else(|| {
+                        eprintln!("esto watch: --on requires a value");
+                        std::process::exit(1);
+                    });
+                    if val == "git-commit" {
+                        triggers.push(esto::watch::WatchTrigger::GitCommit);
+                    } else if let Some(path) = val.strip_prefix("inotify:").or_else(|| val.strip_prefix("fs:")) {
+                        triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(path)));
+                    } else {
+                        eprintln!("esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit");
+                        std::process::exit(1);
+                    }
+                }
+                "--every" => {
+                    let val = args_iter.next().unwrap_or_else(|| {
+                        eprintln!("esto watch: --every requires a value");
+                        std::process::exit(1);
+                    });
+                    interval = Some(parse_duration(val).unwrap_or_else(|e| {
+                        eprintln!("esto watch: {e}");
+                        std::process::exit(1);
+                    }));
+                }
+                other if !other.starts_with('-') => file = Some(other.to_string()),
+                other => {
+                    eprintln!("esto watch: unknown flag {other}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        let file = file.unwrap_or_else(|| {
+            eprintln!("esto watch: missing file argument\nUsage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+            std::process::exit(1);
+        });
+        if let Err(e) = esto::watch::watch_file(&file, triggers, interval, dry_run, quiet) {
+            eprintln!("esto watch: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if raw.first().map(|s| s == "run").unwrap_or(false) {
         let rest = &raw[1..];
         let mut dry_run = false;

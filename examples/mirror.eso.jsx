@@ -10,13 +10,13 @@
  *   esto run examples/mirror.eso.jsx
  */
 
-import { h, defineTarget, sh, exists, read, ls, hash } from 'esto'
+import { h, unit, sh, exists, read, ls, hash } from 'esto'
 
 const sig = (s) => hash(s).slice(0, 8)
 const write = (i) => sh`mkdir -p out && printf 'sig=%s\ncontent=%s\n' ${i.sig} ${i.content} > out/${i.name}.txt`
 
 // Kind: no desired() — desired items come from JSX leaf instances (<File ...props />)
-const File = defineTarget({
+const File = unit({
   key:   (i) => i.name,
   value: (i) => i.sig,
   observe: () => exists('out')

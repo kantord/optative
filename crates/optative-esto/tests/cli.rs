@@ -137,6 +137,45 @@ fn grounding_op_tsx_creates_task_files() {
     assert!(dir.path().join("tasks/bar.md").exists(), "tasks/bar.md should be created");
 }
 
+// ── esto/fs stdlib ───────────────────────────────────────────────────────────
+
+#[test]
+fn esto_fs_file_glob_enters_matched_files() {
+    let dir = tempfile::tempdir().unwrap();
+    // Create 2 .txt files in root and 1 in a subdir (should not match *.txt)
+    fs::write(dir.path().join("alpha.txt"), "a").unwrap();
+    fs::write(dir.path().join("beta.txt"), "b").unwrap();
+    fs::create_dir(dir.path().join("sub")).unwrap();
+    fs::write(dir.path().join("sub/gamma.txt"), "g").unwrap();
+
+    // Script: use File glob to enumerate *.txt (root only) and mark each as observed
+    let script = r#"
+import { h, unit } from 'esto'
+import { File } from 'esto/fs'
+
+const Seen = unit({
+  key: (x) => x.file,
+  value: (x) => x.file,
+  observe: () => [],
+})
+
+export default () => (
+  <File glob="*.txt">{({ file }) => <Seen file={file} />}</File>
+)
+"#;
+    let script_path = dir.path().join("test.op.jsx");
+    fs::write(&script_path, script).unwrap();
+
+    let status = esto()
+        .args(["run", "--dry-run", script_path.to_str().unwrap()])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+
+    // 2 root .txt files matched → dry-run exit code = 2
+    assert_eq!(status.code(), Some(2), "File glob '*.txt' should match exactly 2 root-level files");
+}
+
 // ── TSV CLI (--to / --from / --once / --fail-on-change) ─────────────────────
 
 #[test]
