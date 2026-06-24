@@ -159,35 +159,58 @@ fn main() {
         return;
     }
 
-    if raw.first().map(|s| s == "types").unwrap_or(false) {
-        let mut out_dir = std::path::PathBuf::from(".");
+    if raw.first().map(|s| s == "types" || s == "type-check").unwrap_or(false) {
+        let subcommand = raw[0].clone();
         let rest = &raw[1..];
+        let mut out_dir = std::path::PathBuf::from(".");
         let mut args_iter = rest.iter();
         while let Some(arg) = args_iter.next() {
             match arg.as_str() {
                 "--out" => {
                     let val = args_iter.next().unwrap_or_else(|| {
-                        eprintln!("esto types: --out requires a directory path");
+                        eprintln!("esto {subcommand}: --out requires a directory path");
                         std::process::exit(1);
                     });
                     out_dir = std::path::PathBuf::from(val);
                 }
                 other => {
-                    eprintln!("esto types: unknown argument {other}\nUsage: esto types [--out <dir>]");
+                    eprintln!("esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]");
                     std::process::exit(1);
                 }
             }
         }
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
-            eprintln!("esto types: could not create output directory: {e}");
+            eprintln!("esto {subcommand}: could not create output directory: {e}");
             std::process::exit(1);
         }
-        let dest = out_dir.join("esto.d.ts");
-        if let Err(e) = std::fs::write(&dest, esto::types::ESTO_DTS) {
-            eprintln!("esto types: failed to write {}: {e}", dest.display());
+        // Write esto.d.ts
+        let dts_dest = out_dir.join("esto.d.ts");
+        if let Err(e) = std::fs::write(&dts_dest, esto::types::ESTO_DTS) {
+            eprintln!("esto {subcommand}: failed to write {}: {e}", dts_dest.display());
             std::process::exit(1);
         }
-        eprintln!("esto types: wrote {}", dest.display());
+        eprintln!("esto {subcommand}: wrote {}", dts_dest.display());
+        // Write tsconfig.esto.json
+        let tsconfig_dest = out_dir.join("tsconfig.esto.json");
+        if let Err(e) = std::fs::write(&tsconfig_dest, esto::types::ESTO_TSCONFIG) {
+            eprintln!("esto {subcommand}: failed to write {}: {e}", tsconfig_dest.display());
+            std::process::exit(1);
+        }
+        eprintln!("esto {subcommand}: wrote {}", tsconfig_dest.display());
+        // For type-check: invoke tsc
+        if subcommand == "type-check" {
+            let status = std::process::Command::new("tsc")
+                .arg("--noEmit")
+                .arg("--project")
+                .arg(&tsconfig_dest)
+                .status()
+                .unwrap_or_else(|e| {
+                    eprintln!("esto type-check: could not run tsc — is TypeScript installed? ({e})");
+                    eprintln!("  Install with: npm install -g typescript");
+                    std::process::exit(127);
+                });
+            std::process::exit(status.code().unwrap_or(1));
+        }
         return;
     }
 

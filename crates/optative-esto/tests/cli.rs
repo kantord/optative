@@ -258,7 +258,7 @@ export default () => (
 // ── esto types ───────────────────────────────────────────────────────────────
 
 #[test]
-fn types_writes_dts_with_module_declarations() {
+fn types_writes_dts_and_tsconfig() {
     let dir = tempfile::tempdir().unwrap();
 
     let status = esto()
@@ -276,6 +276,12 @@ fn types_writes_dts_with_module_declarations() {
     assert!(dts.contains("export function unit"), "esto module should export unit");
     assert!(dts.contains("export function exists"), "esto module should export exists");
     assert!(dts.contains("export function GitRepo"), "esto/fs module should export GitRepo");
+
+    let tsconfig = fs::read_to_string(dir.path().join("tsconfig.esto.json")).unwrap();
+    assert!(tsconfig.contains("\"jsxFactory\": \"h\""), "tsconfig should set jsxFactory to h");
+    assert!(tsconfig.contains("\"noEmit\": true"), "tsconfig should set noEmit");
+    assert!(tsconfig.contains("*.op.tsx"), "tsconfig should include *.op.tsx");
+    assert!(tsconfig.contains("esto.d.ts"), "tsconfig should include esto.d.ts");
 }
 
 // ── TSV CLI (--to / --from / --once / --fail-on-change) ─────────────────────
