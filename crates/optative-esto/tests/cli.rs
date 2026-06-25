@@ -257,6 +257,59 @@ export default () => (
 
 // ── esto types ───────────────────────────────────────────────────────────────
 
+/// Exercises all 5 type bugs that were found by running tsc on real consumers.
+/// This is the regression guard: if any of these patterns break, the d.ts is wrong.
+#[test]
+fn type_check_fixture_passes_tsc() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let fixture = r##"
+import { h, Fragment, unit, sh, Context } from 'esto'
+import { GitRepo, Folder, File } from 'esto/fs'
+
+// Bug 1: sh returns string so JSON.parse(sh`...`) must typecheck
+interface Config { name: string }
+const _cfg: Config = JSON.parse(sh`echo '{"name":"x"}'`)
+
+// Bug 4: unit over a plain interface (rejects with old T extends Record<string,unknown>)
+interface Item { path: string; hash: string }
+const FileUnit = unit<Item>({
+  key: (f) => f.path,
+  value: (f) => f.hash,
+  observe: () => [],
+  enter: (f) => sh`touch ${f.path}`,
+})
+
+// Bug 3: Context must be valid as a JSX element (old: unique symbol)
+const _withCtx = () => (
+  <Context data={{ repo: 'r' }}>
+    <FileUnit path="x.ts" hash="a" />
+  </Context>
+)
+
+// Bugs 2 + 5: GitRepo return JSX.Element; supervisor + enumerate overloads infer ctx
+export default () => (
+  <GitRepo>{({ Folder: F }) => (
+    <F name="docs">{({ File: Fi }) => (
+      <>
+        <Fi name="index.md" content={"# Docs"} />
+        <Fi glob="*.txt">{({ file }) => <FileUnit path={file} hash="h" />}</Fi>
+      </>
+    )}</F>
+  )}</GitRepo>
+)
+"##;
+    fs::write(dir.path().join("fixture.op.tsx"), fixture).unwrap();
+
+    let status = esto()
+        .args(["type-check", "--out", dir.path().to_str().unwrap()])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+
+    assert_eq!(status.code(), Some(0), "esto type-check should exit 0 against the type-coverage fixture");
+}
+
 #[test]
 fn types_writes_dts_and_tsconfig() {
     let dir = tempfile::tempdir().unwrap();

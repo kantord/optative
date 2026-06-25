@@ -37,14 +37,22 @@ declare module "esto" {
   ): EsNode;
 
   // JSX fragment marker — use <> or <Fragment>.
-  export declare const Fragment: unique symbol;
+  // Typed as a component (not a symbol) so tsc accepts it as a jsxFragmentFactory target.
+  export const Fragment: (props: { children?: unknown }) => JSX.Element;
 
   // Context provider — threads a string or object value to descendant leaves.
   // <Context value="..."> or <Context data={obj}> to pass structured data.
-  export declare const Context: unique symbol;
+  // Typed as a component (not a symbol) so <Context> is valid JSX.
+  export const Context: (props: {
+    value?: string;
+    data?: Record<string, unknown>;
+    children?: unknown;
+  }) => JSX.Element;
 
   // Unit definition passed to unit().
-  interface UnitDef<T extends Record<string, unknown>> {
+  // T is unconstrained so plain `interface Foo { ... }` types are accepted
+  // (TS interfaces lack an implicit index signature and would fail Record<string,unknown>).
+  interface UnitDef<T> {
     /** Stable identity key for an item — used to detect enter/exit. */
     key?: (item: T) => string;
     /** Opaque change-detection value — update fires when this differs. */
@@ -65,12 +73,10 @@ declare module "esto" {
    *   const File = unit({ key: f => f.path, observe: () => [...], enter: f => sh`...` })
    *   // then: <File path="x.txt" />
    */
-  export function unit<T extends Record<string, unknown>>(
-    def: UnitDef<T>
-  ): (props: T) => EsNode;
+  export function unit<T>(def: UnitDef<T>): (props: T) => EsNode;
 
-  /** Template tag — runs a shell command at reconcile time. Interpolations are shell-quoted. */
-  export declare const sh: (strings: TemplateStringsArray, ...values: unknown[]) => void;
+  /** Template tag — runs a shell command at reconcile time. Returns stdout as a string. */
+  export declare const sh: (strings: TemplateStringsArray, ...values: unknown[]) => string;
 
   /** Template tag — emits an LLM task file for this leaf node. */
   export declare const prompt: (strings: TemplateStringsArray, ...values: unknown[]) => object;
@@ -122,6 +128,8 @@ declare module "esto/fs" {
     glob: string;
     /** Render prop called once per matched file. */
     children: (ctx: FileCtx) => unknown;
+    name?: never;
+    content?: never;
   }
 
   /** Supervisor claim mode (inside a Folder name="..."): declare membership. */
@@ -138,11 +146,13 @@ declare module "esto/fs" {
 
   /**
    * Enumerate files or declare file claims inside a supervisor scope.
+   * Overloaded so the render-prop ctx type is inferred precisely (not any).
    *
    *   // Enumerate: <File glob="**\/*.ts">{({ file }) => <Seen file={file} />}</File>
    *   // Claim:     <File name="index.md" content={body} />
    */
-  export function File(props: FileEnumerateProps | FileClaimProps): unknown;
+  export function File(props: FileEnumerateProps): JSX.Element;
+  export function File(props: FileClaimProps): JSX.Element;
 
   // ── Folder ────────────────────────────────────────────────────────────────
 
@@ -152,6 +162,7 @@ declare module "esto/fs" {
     glob: string;
     /** Render prop called once per matched directory. */
     children: (ctx: FolderCtx) => unknown;
+    name?: never;
   }
 
   /**
@@ -163,15 +174,18 @@ declare module "esto/fs" {
     name: string;
     /** Render prop receiving File + Folder for claim declarations. */
     children: (ctx: { File: typeof File; Folder: typeof Folder }) => unknown;
+    glob?: never;
   }
 
   /**
    * Enumerate subdirectories or supervise a named directory's file set.
+   * Overloaded so the render-prop ctx type is inferred precisely (not any).
    *
    *   // Enumerate: <Folder glob="packages/*">{({ dir }) => ...}</Folder>
    *   // Supervisor: <Folder name="docs/api">{({ File }) => <File name="x.md" content={c} />}</Folder>
    */
-  export function Folder(props: FolderEnumerateProps | FolderSupervisorProps): unknown;
+  export function Folder(props: FolderSupervisorProps): JSX.Element;
+  export function Folder(props: FolderEnumerateProps): JSX.Element;
 
   // ── GitRepo ───────────────────────────────────────────────────────────────
 
@@ -184,7 +198,7 @@ declare module "esto/fs" {
    */
   export function GitRepo(props: {
     children: (ctx: RepoCtx) => unknown;
-  }): unknown;
+  }): JSX.Element;
 }
 "#;
 
