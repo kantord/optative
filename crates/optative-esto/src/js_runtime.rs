@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::jsx::transform_source;
 use glob;
 
-const ESTO_JS: &str = include_str!("js/esto.mjs");
-const ESTO_FS_JS: &str = include_str!("js/esto_fs.mjs");
+const ESTO_GLOBALS_JS: &str = include_str!("js/esto_globals.js");
+const ESTO_FS_GLOBALS_JS: &str = include_str!("js/esto_fs_globals.js");
 
 // ── resolver: relative imports from user file's directory ────────────────────
 
@@ -392,15 +392,21 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
     let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
 
     let runtime = Runtime::new().map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+    // Build builtin resolver + loader from the registry, grouped by module path.
+    let mut module_groups: std::collections::HashMap<&'static str, Vec<&crate::registry::EsEntry>> =
+        std::collections::HashMap::new();
+    for e in crate::registry::ES_BUILTINS {
+        module_groups.entry(e.module_path).or_default().push(e);
+    }
+    let builtin_resolver = module_groups
+        .keys()
+        .fold(BuiltinResolver::default(), |r, path| r.with_module(*path));
+    let builtin_loader = module_groups.iter().fold(BuiltinLoader::default(), |l, (path, entries)| {
+        l.with_module(*path, crate::registry::synthetic_module_source_for_entries(entries))
+    });
     runtime.set_loader(
-        (
-            BuiltinResolver::default().with_module("esto").with_module("esto/fs"),
-            EstoResolver { base_dir },
-        ),
-        (
-            BuiltinLoader::default().with_module("esto", ESTO_JS).with_module("esto/fs", ESTO_FS_JS),
-            EstoLoader,
-        ),
+        (builtin_resolver, EstoResolver { base_dir }),
+        (builtin_loader, EstoLoader),
     );
     let context = Context::full(&runtime).map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
 
@@ -470,6 +476,12 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                     .map(|p| p.to_str().unwrap_or(".").to_owned())
                     .map_err(|_| rquickjs::Error::Unknown)
             })?)?;
+
+            // Eval JS globals shims: set __esto_h, __esto_fragment, __esto_context,
+            // __esto_unit, __esto_sh, __esto_prompt, __esto_ls, globalThis.console,
+            // __esto_fs_File, __esto_fs_Folder, __esto_fs_GitRepo.
+            ctx.eval::<(), _>(ESTO_GLOBALS_JS)?;
+            ctx.eval::<(), _>(ESTO_FS_GLOBALS_JS)?;
 
             // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)

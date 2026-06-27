@@ -1,5 +1,6 @@
 pub mod jsx;
 pub mod js_runtime;
+pub mod registry;
 pub mod watch;
 pub mod types;
 
