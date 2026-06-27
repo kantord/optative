@@ -8,7 +8,6 @@ use rquickjs::{Array, Context, Ctx, FromJs, Module, Object, Runtime, Value};
 use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
-use glob;
 
 const ESTO_GLOBALS_JS: &str = include_str!("js/esto_globals.js");
 const ESTO_FS_GLOBALS_JS: &str = include_str!("js/esto_fs_globals.js");
@@ -64,7 +63,7 @@ impl Loader for EstoLoader {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // Simple JSON array serializer for Vec<String> without a json dep.
-fn serde_json_simple_array(items: &[String]) -> String {
+pub fn serde_json_simple_array(items: &[String]) -> String {
     let inner: Vec<String> = items
         .iter()
         .map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
@@ -412,74 +411,12 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
 
     let (enter, update, exit, unchanged, errors) = context
         .with(|ctx| -> rquickjs::Result<(usize, usize, usize, usize, usize)> {
-            // Register __sh_exec: shell command via Rust
-            let sh_fn = Function::new(ctx.clone(), |cmd: String| -> rquickjs::Result<String> {
-                let out = std::process::Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(&cmd)
-                    .output()
-                    .map_err(|_| rquickjs::Error::Unknown)?;
-                if !out.status.success() {
-                    return Err(rquickjs::Error::Unknown);
-                }
-                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-            })?;
-            ctx.globals().set("__sh_exec", sh_fn)?;
+            // Register internal globals (used by JS shims) and exported Rust-backed globals.
+            crate::builtins::register_internal(&ctx)?;
+            crate::registry::register_builtins(&ctx)?;
 
-            // Owned esto I/O API (read-only; writes go through sh)
-            ctx.globals().set("__esto_exists", Function::new(ctx.clone(), |path: String| {
-                Path::new(&path).exists()
-            })?)?;
-            ctx.globals().set("__esto_read", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
-                std::fs::read_to_string(&path).map_err(|_| rquickjs::Error::Unknown)
-            })?)?;
-            ctx.globals().set("__esto_ls_json", Function::new(ctx.clone(), |dir: String| -> String {
-                let entries: Vec<String> = std::fs::read_dir(&dir)
-                    .map(|rd| rd.filter_map(|e| e.ok())
-                        .filter_map(|e| e.file_name().into_string().ok())
-                        .collect())
-                    .unwrap_or_default();
-                serde_json_simple_array(&entries)
-            })?)?;
-            ctx.globals().set("__esto_hash", Function::new(ctx.clone(), |data: String| {
-                let hash = Sha256::digest(data.as_bytes());
-                format!("{hash:x}")
-            })?)?;
-            ctx.globals().set("__console_print", Function::new(ctx.clone(), |level: String, msg: String| {
-                eprintln!("[{level}] {msg}");
-            })?)?;
-
-            // esto/fs globals: real glob, git root, dir check
-            ctx.globals().set("__esto_glob", Function::new(ctx.clone(), |pattern: String| -> String {
-                let matches: Vec<String> = glob::glob(&pattern)
-                    .map(|paths| {
-                        paths.filter_map(|p| p.ok())
-                             .filter_map(|p| p.to_str().map(|s| s.to_owned()))
-                             .collect()
-                    })
-                    .unwrap_or_default();
-                serde_json_simple_array(&matches)
-            })?)?;
-            ctx.globals().set("__esto_git_root", Function::new(ctx.clone(), || -> rquickjs::Result<String> {
-                let out = std::process::Command::new("git")
-                    .args(["rev-parse", "--show-toplevel"])
-                    .output()
-                    .map_err(|_| rquickjs::Error::Unknown)?;
-                if !out.status.success() { return Err(rquickjs::Error::Unknown); }
-                Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-            })?)?;
-            ctx.globals().set("__esto_is_dir", Function::new(ctx.clone(), |path: String| {
-                Path::new(&path).is_dir()
-            })?)?;
-            ctx.globals().set("__esto_cwd", Function::new(ctx.clone(), || -> rquickjs::Result<String> {
-                std::env::current_dir()
-                    .map(|p| p.to_str().unwrap_or(".").to_owned())
-                    .map_err(|_| rquickjs::Error::Unknown)
-            })?)?;
-
-            // Eval JS globals shims: set __esto_h, __esto_fragment, __esto_context,
-            // __esto_unit, __esto_sh, __esto_prompt, __esto_ls, globalThis.console,
-            // __esto_fs_File, __esto_fs_Folder, __esto_fs_GitRepo.
+            // Eval JS globals shims for JS-backed entries (noop register fns above).
+            // Replaced entry-by-entry as Steps 3–6 move each to Rust.
             ctx.eval::<(), _>(ESTO_GLOBALS_JS)?;
             ctx.eval::<(), _>(ESTO_FS_GLOBALS_JS)?;
 
