@@ -12,9 +12,8 @@ pub const ES_BUILTINS: &[EsEntry] = &[
     EsEntry { module_path: "esto", export_name: "exists",   global_name: "__esto_exists",   register: builtins::register_exists },
     EsEntry { module_path: "esto", export_name: "read",     global_name: "__esto_read",     register: builtins::register_read },
     EsEntry { module_path: "esto", export_name: "hash",     global_name: "__esto_hash",     register: builtins::register_hash },
-    // esto module — JS-backed (set by esto_globals.js eval; noop until Step 4)
-    EsEntry { module_path: "esto", export_name: "h",        global_name: "__esto_h",        register: builtins::noop },
-    // esto module — Rust-backed (moved from esto_globals.js in Step 3)
+    // esto module — Rust-backed (moved from esto_globals.js in Steps 3–4)
+    EsEntry { module_path: "esto", export_name: "h",        global_name: "__esto_h",        register: builtins::register_h },
     EsEntry { module_path: "esto", export_name: "Fragment",  global_name: "__esto_fragment", register: builtins::register_fragment },
     EsEntry { module_path: "esto", export_name: "Context",  global_name: "__esto_context",  register: builtins::register_context_marker },
     EsEntry { module_path: "esto", export_name: "unit",     global_name: "__esto_unit",     register: builtins::register_unit },
