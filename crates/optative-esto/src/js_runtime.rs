@@ -9,8 +9,6 @@ use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
 
-const ESTO_FS_GLOBALS_JS: &str = include_str!("js/esto_fs_globals.js");
-
 // ── resolver: relative imports from user file's directory ────────────────────
 
 struct EstoResolver {
@@ -413,10 +411,6 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
             // Register internal globals (used by JS shims) and exported Rust-backed globals.
             crate::builtins::register_internal(&ctx)?;
             crate::registry::register_builtins(&ctx)?;
-
-            // Eval JS globals shim for esto/fs JS-backed entries.
-            // Replaced entry-by-entry as Steps 5–6 move each to Rust.
-            ctx.eval::<(), _>(ESTO_FS_GLOBALS_JS)?;
 
             // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)

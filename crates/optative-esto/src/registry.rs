@@ -20,10 +20,10 @@ pub const ES_BUILTINS: &[EsEntry] = &[
     EsEntry { module_path: "esto", export_name: "sh",       global_name: "__esto_sh",       register: builtins::register_sh },
     EsEntry { module_path: "esto", export_name: "prompt",   global_name: "__esto_prompt",   register: builtins::register_prompt },
     EsEntry { module_path: "esto", export_name: "ls",       global_name: "__esto_ls",       register: builtins::register_ls },
-    // esto/fs module — JS-backed (set by esto_fs_globals.js eval; noop until Steps 5–6)
-    EsEntry { module_path: "esto/fs", export_name: "File",   global_name: "__esto_fs_File",   register: builtins::noop },
-    EsEntry { module_path: "esto/fs", export_name: "Folder", global_name: "__esto_fs_Folder", register: builtins::noop },
-    EsEntry { module_path: "esto/fs", export_name: "GitRepo",global_name: "__esto_fs_GitRepo",register: builtins::noop },
+    // esto/fs module — Rust-backed (moved from esto_fs_globals.js in Step 5)
+    EsEntry { module_path: "esto/fs", export_name: "File",   global_name: "__esto_fs_File",   register: builtins::register_fs_file },
+    EsEntry { module_path: "esto/fs", export_name: "Folder", global_name: "__esto_fs_Folder", register: builtins::register_fs_folder },
+    EsEntry { module_path: "esto/fs", export_name: "GitRepo",global_name: "__esto_fs_GitRepo",register: builtins::register_fs_git_repo },
 ];
 
 pub fn register_builtins(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
