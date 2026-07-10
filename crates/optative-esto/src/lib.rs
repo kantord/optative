@@ -1,6 +1,4 @@
 pub mod builtins;
-pub mod jsx;
-pub mod js_runtime;
 pub mod registry;
 pub mod watch;
 pub mod types;
@@ -15,7 +13,23 @@ use optative::{Lifecycle, OptativeSet};
 use optative::reconcile::Reconcile;
 
 pub fn run_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), EstoError> {
-    js_runtime::run_esto_file(file, dry_run, quiet)
+    fn setup(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+        builtins::register_internal(ctx)?;
+        registry::register_builtins(ctx)
+    }
+    let stats = optative_script::run_script(
+        file,
+        registry::ES_BUILTINS,
+        setup,
+        dry_run,
+        quiet,
+    ).map_err(|e| EstoError::WorkerError(e.to_string()))?;
+
+    let exit_code = if dry_run { stats.enter + stats.update + stats.exit } else { stats.errors };
+    if exit_code != 0 {
+        std::process::exit(exit_code as i32);
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]

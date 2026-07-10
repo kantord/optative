@@ -9,27 +9,23 @@ use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
 
-// ── resolver: relative imports from user file's directory ────────────────────
+// ── resolver ──────────────────────────────────────────────────────────────────
 
-struct EstoResolver {
+struct ScriptResolver {
     base_dir: PathBuf,
 }
 
-impl Resolver for EstoResolver {
+impl Resolver for ScriptResolver {
     fn resolve(&mut self, _ctx: &Ctx, base: &str, name: &str) -> rquickjs::Result<String> {
         if !name.starts_with("./") && !name.starts_with("../") {
             return Err(rquickjs::Error::new_resolving(base, name));
         }
         let dir = if Path::new(base).is_absolute() {
-            Path::new(base)
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.base_dir.clone())
+            Path::new(base).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| self.base_dir.clone())
         } else {
             self.base_dir.clone()
         };
-        let resolved = dir.join(name);
-        resolved
+        dir.join(name)
             .canonicalize()
             .map_err(|_| rquickjs::Error::new_resolving(base, name))?
             .to_str()
@@ -38,14 +34,13 @@ impl Resolver for EstoResolver {
     }
 }
 
-// ── loader: disk .mjs/.jsx; transforms .jsx via oxc ─────────────────────────
+// ── loader ────────────────────────────────────────────────────────────────────
 
-struct EstoLoader;
+struct ScriptLoader;
 
-impl Loader for EstoLoader {
+impl Loader for ScriptLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
-        let source =
-            std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
+        let source = std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
         let source = if name.ends_with(".jsx") || name.ends_with(".tsx")
             || name.ends_with(".ts") || name.ends_with(".mts")
         {
@@ -57,9 +52,8 @@ impl Loader for EstoLoader {
     }
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-// Simple JSON array serializer for Vec<String> without a json dep.
 pub fn serde_json_simple_array(items: &[String]) -> String {
     let inner: Vec<String> = items
         .iter()
@@ -77,30 +71,23 @@ fn emit_task(key: &str, context: &[String], context_data: &[String], body: &str)
     std::fs::create_dir_all("tasks")?;
     std::fs::create_dir_all(".esto/context")?;
 
-    let refs: Vec<String> = context
-        .iter()
-        .map(|entry| {
-            let hash = sha12(entry);
-            let path = format!(".esto/context/{hash}.md");
-            if !Path::new(&path).exists() {
-                let _ = std::fs::write(&path, entry);
-            }
-            let first = entry.lines().next().unwrap_or("").chars().take(60).collect::<String>();
-            format!("  {path} — {first}")
-        })
-        .collect();
+    let refs: Vec<String> = context.iter().map(|entry| {
+        let hash = sha12(entry);
+        let path = format!(".esto/context/{hash}.md");
+        if !Path::new(&path).exists() {
+            let _ = std::fs::write(&path, entry);
+        }
+        let first = entry.lines().next().unwrap_or("").chars().take(60).collect::<String>();
+        format!("  {path} — {first}")
+    }).collect();
 
-    let safe: String = key
-        .chars()
+    let safe: String = key.chars()
         .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
         .collect();
 
     let mut sections: Vec<String> = Vec::new();
     if !refs.is_empty() {
-        sections.push(format!(
-            "Context (read once; same id = same content):\n{}",
-            refs.join("\n")
-        ));
+        sections.push(format!("Context (read once; same id = same content):\n{}", refs.join("\n")));
     }
     if !context_data.is_empty() {
         let json = if context_data.len() == 1 {
@@ -120,7 +107,6 @@ fn emit_task(key: &str, context: &[String], context_data: &[String], body: &str)
     std::fs::write(format!("tasks/{safe}.md"), content)
 }
 
-// Resolves a JS value that might be a Promise; drives the job queue if needed.
 fn await_val<'js, T: FromJs<'js>>(val: Value<'js>) -> rquickjs::Result<T> {
     MaybePromise::from_value(val).finish()
 }
@@ -134,7 +120,7 @@ fn check_prompt(key: &str, context: &[String], context_data: &[String], val: Val
     Ok(())
 }
 
-// ── leaf: a resolved (kind, item, context) triple from the JSX tree ──────────
+// ── Leaf ──────────────────────────────────────────────────────────────────────
 
 struct Leaf<'js> {
     kind_id: u32,
@@ -144,7 +130,7 @@ struct Leaf<'js> {
     context_data: Vec<String>,
 }
 
-// ── reduce: walk a JSX tree to extract leaves ────────────────────────────────
+// ── reduce ────────────────────────────────────────────────────────────────────
 
 fn reduce<'js>(
     ctx: &Ctx<'js>,
@@ -158,8 +144,6 @@ fn reduce<'js>(
     if let Some(false) = node.as_bool() {
         return Ok(vec![]);
     }
-
-    // Array — flatten
     if let Some(arr) = node.as_array() {
         let mut leaves = vec![];
         for i in 0..arr.len() {
@@ -168,9 +152,7 @@ fn reduce<'js>(
         }
         return Ok(leaves);
     }
-
     if let Some(obj) = node.as_object() {
-        // $fragment: true
         if obj.get::<_, bool>("$fragment").unwrap_or(false) {
             let children: Array = obj.get("children")?;
             let mut leaves = vec![];
@@ -180,8 +162,6 @@ fn reduce<'js>(
             }
             return Ok(leaves);
         }
-
-        // $context: true
         if obj.get::<_, bool>("$context").unwrap_or(false) {
             let v: Value = obj.get("value")?;
             let new_ctx = if v.is_null() || v.is_undefined() {
@@ -211,8 +191,6 @@ fn reduce<'js>(
             }
             return Ok(leaves);
         }
-
-        // $component: fn — call it with props
         let comp_val: Value = obj.get("$component")?;
         if comp_val.is_function() {
             let comp_fn = comp_val.into_function().ok_or(rquickjs::Error::Unknown)?;
@@ -220,8 +198,6 @@ fn reduce<'js>(
             let result: Value = comp_fn.call::<(Value,), Value>((props,))?;
             return reduce(ctx, result, context, context_data);
         }
-
-        // $kind: kindObj — leaf node
         let kind_val: Value = obj.get("$kind")?;
         if kind_val.is_object() {
             let kind_obj = kind_val.into_object().ok_or(rquickjs::Error::Unknown)?;
@@ -230,11 +206,18 @@ fn reduce<'js>(
             return Ok(vec![Leaf { kind_id, kind: kind_obj, item, context, context_data }]);
         }
     }
-
     Err(rquickjs::Error::Unknown)
 }
 
-// ── reconcileKind: diff desired vs current, call lifecycle callbacks ──────────
+// ── reconcile ─────────────────────────────────────────────────────────────────
+
+pub struct RunStats {
+    pub enter: usize,
+    pub update: usize,
+    pub exit: usize,
+    pub unchanged: usize,
+    pub errors: usize,
+}
 
 struct ReconcileResult {
     enter: usize,
@@ -255,48 +238,26 @@ fn call_lifecycle<'js>(
     dry_run: bool,
     errors: &mut usize,
 ) {
-    if dry_run {
-        return;
-    }
-    let fn_val: Value = match kind.get(method) {
-        Ok(v) => v,
-        Err(_) => return, // method not defined — silently skip
-    };
-    if !fn_val.is_function() {
-        return;
-    }
-    let func = match fn_val.into_function() {
-        Some(f) => f,
-        None => return,
-    };
-
-    // Build args tuple dynamically
+    if dry_run { return; }
+    let fn_val: Value = match kind.get(method) { Ok(v) => v, Err(_) => return };
+    if !fn_val.is_function() { return; }
+    let func = match fn_val.into_function() { Some(f) => f, None => return };
     let result: rquickjs::Result<Value> = match args.len() {
         0 => func.call::<(), Value>(()),
         1 => func.call::<(Value,), Value>((args[0].clone(),)),
         2 => func.call::<(Value, Value), Value>((args[0].clone(), args[1].clone())),
         _ => return,
     };
-
     match result {
-        Err(e) => {
-            let msg = format!("{e}");
-            eprintln!("[error] {key}: {msg}");
-            *errors += 1;
-        }
+        Err(e) => { eprintln!("[error] {key}: {e}"); *errors += 1; }
         Ok(raw) => match await_val::<Value>(raw) {
-            Err(e) => {
-                let msg = format!("{e}");
-                eprintln!("[error] {key}: {msg}");
-                *errors += 1;
-            }
+            Err(e) => { eprintln!("[error] {key}: {e}"); *errors += 1; }
             Ok(resolved) => {
                 if let Err(e) = check_prompt(key, context, context_data, resolved) {
-                    eprintln!("[error] {key}: {e}");
-                    *errors += 1;
+                    eprintln!("[error] {key}: {e}"); *errors += 1;
                 }
             }
-        },
+        }
     }
 }
 
@@ -309,7 +270,6 @@ fn reconcile_kind<'js>(
 ) -> rquickjs::Result<ReconcileResult> {
     let mut r = ReconcileResult { enter: 0, update: 0, exit: 0, unchanged: 0, errors: 0 };
 
-    // observe() → current items
     let observe_fn: Function = kind.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
     let obs_val: Value = await_val(obs_raw)?;
@@ -318,7 +278,6 @@ fn reconcile_kind<'js>(
     let key_fn: Function = kind.get("key")?;
     let value_fn: Function = kind.get("value")?;
 
-    // Build current map: key_str → (item, value_str)
     let mut current: HashMap<String, (Value<'js>, String)> = HashMap::new();
     for i in 0..obs_arr.len() {
         let item: Value = obs_arr.get(i)?;
@@ -327,7 +286,6 @@ fn reconcile_kind<'js>(
         current.insert(k, (item, v));
     }
 
-    // Build desired map: key_str → (item, value_str, context, context_data)
     let mut desired: HashMap<String, (Value<'js>, String, Vec<String>, Vec<String>)> = HashMap::new();
     for leaf in leaves {
         let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
@@ -335,21 +293,16 @@ fn reconcile_kind<'js>(
         desired.insert(k, (leaf.item, v, leaf.context, leaf.context_data));
     }
 
-    // Enter + Update
     for (k, (d_item, d_val, ctx_chain, ctx_data)) in &desired {
         match current.get(k) {
             None => {
-                if !quiet {
-                    eprintln!("[enter] {k}");
-                }
+                if !quiet { eprintln!("[enter] {k}"); }
                 r.enter += 1;
                 call_lifecycle(ctx, kind, "enter", vec![d_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
             }
             Some((c_item, c_val)) => {
                 if d_val != c_val {
-                    if !quiet {
-                        eprintln!("[update] {k}");
-                    }
+                    if !quiet { eprintln!("[update] {k}"); }
                     r.update += 1;
                     call_lifecycle(ctx, kind, "update", vec![d_item.clone(), c_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
                 } else {
@@ -359,12 +312,9 @@ fn reconcile_kind<'js>(
         }
     }
 
-    // Exit
     for (k, (c_item, _)) in &current {
         if !desired.contains_key(k) {
-            if !quiet {
-                eprintln!("[exit] {k}");
-            }
+            if !quiet { eprintln!("[exit] {k}"); }
             r.exit += 1;
             call_lifecycle(ctx, kind, "exit", vec![c_item.clone()], k, &[], &[], dry_run, &mut r.errors);
         }
@@ -373,46 +323,49 @@ fn reconcile_kind<'js>(
     Ok(r)
 }
 
-// ── public entry point ───────────────────────────────────────────────────────
+// ── run_script ────────────────────────────────────────────────────────────────
 
-pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate::EstoError> {
-    let abs_path = std::fs::canonicalize(file).map_err(crate::EstoError::Io)?;
+pub fn run_script(
+    path: &str,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+) -> Result<RunStats, crate::ScriptError> {
+    let abs_path = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
     let base_dir = abs_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let path_str = abs_path.to_str().ok_or_else(|| {
-        crate::EstoError::WorkerError("non-UTF8 file path".into())
-    })?
-    .to_string();
-    // .jsx / .tsx / .op.jsx / .op.tsx → Tier 2/3 (JSX tree); plain .mjs / .ts → Tier 1
+    let path_str = abs_path.to_str()
+        .ok_or_else(|| crate::ScriptError::Worker("non-UTF8 file path".into()))?
+        .to_string();
     let needs_transform = path_str.ends_with(".jsx") || path_str.ends_with(".tsx")
         || path_str.ends_with(".ts") || path_str.ends_with(".mts");
     let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
 
-    let runtime = Runtime::new().map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
-    // Build builtin resolver + loader from the registry, grouped by module path.
-    let mut module_groups: std::collections::HashMap<&'static str, Vec<&crate::registry::EsEntry>> =
-        std::collections::HashMap::new();
-    for e in crate::registry::ES_BUILTINS {
+    let runtime = Runtime::new().map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
+
+    let mut module_groups: HashMap<&'static str, Vec<&crate::EsEntry>> = HashMap::new();
+    for e in entries {
         module_groups.entry(e.module_path).or_default().push(e);
     }
-    let builtin_resolver = module_groups
-        .keys()
+    let builtin_resolver = module_groups.keys()
         .fold(BuiltinResolver::default(), |r, path| r.with_module(*path));
-    let builtin_loader = module_groups.iter().fold(BuiltinLoader::default(), |l, (path, entries)| {
-        l.with_module(*path, crate::registry::synthetic_module_source_for_entries(entries))
-    });
+    let builtin_loader = module_groups.iter()
+        .fold(BuiltinLoader::default(), |l, (path, es)| {
+            l.with_module(*path, crate::synthetic_module_source_for_entries(es))
+        });
     runtime.set_loader(
-        (builtin_resolver, EstoResolver { base_dir }),
-        (builtin_loader, EstoLoader),
+        (builtin_resolver, ScriptResolver { base_dir }),
+        (builtin_loader, ScriptLoader),
     );
-    let context = Context::full(&runtime).map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+
+    let context = Context::full(&runtime).map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
     let (enter, update, exit, unchanged, errors) = context
         .with(|ctx| -> rquickjs::Result<(usize, usize, usize, usize, usize)> {
-            // Register internal globals (used by JS shims) and exported Rust-backed globals.
-            crate::builtins::register_internal(&ctx)?;
-            crate::registry::register_builtins(&ctx)?;
+            setup(&ctx)?;
 
-            // Load user module (transform .jsx/.tsx/.ts if needed)
             let src = std::fs::read_to_string(&path_str)
                 .map_err(|_| rquickjs::Error::new_loading(&path_str))?;
             let src = if needs_transform { transform_source(&src, &path_str) } else { src };
@@ -422,16 +375,11 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
 
             let default_val: Value = module.get("default")?;
 
-            // Collect leaves
             let leaves: Vec<Leaf> = if is_jsx {
-                // Tier 2/3: default export is a function → call it → reduce JSX tree
-                let root_fn = default_val
-                    .into_function()
-                    .ok_or(rquickjs::Error::Unknown)?;
+                let root_fn = default_val.into_function().ok_or(rquickjs::Error::Unknown)?;
                 let root: Value = root_fn.call::<(), Value>(())?;
                 reduce(&ctx, root, vec![], vec![])?
             } else {
-                // Tier 1: default export is a target object with desired()
                 let target = default_val.into_object().ok_or(rquickjs::Error::Unknown)?;
                 let desired_fn: Function = target.get("desired")?;
                 let desired_raw: Value = desired_fn.call::<(), Value>(())?;
@@ -445,14 +393,12 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
                 leaves
             };
 
-            // Group leaves by kind (kind_id)
             let mut by_kind: HashMap<u32, (Object, Vec<Leaf>)> = HashMap::new();
             for leaf in leaves {
                 let entry = by_kind.entry(leaf.kind_id).or_insert_with(|| (leaf.kind.clone(), vec![]));
                 entry.1.push(leaf);
             }
 
-            // Reconcile each kind group
             let mut total_enter = 0usize;
             let mut total_update = 0usize;
             let mut total_exit = 0usize;
@@ -470,18 +416,11 @@ pub fn run_esto_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), crate
 
             Ok((total_enter, total_update, total_exit, total_unchanged, total_errors))
         })
-        .map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+        .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
     if !quiet {
-        eprintln!(
-            "reconciled: {enter} enter, {update} update, {exit} exit ({unchanged} unchanged)"
-        );
+        eprintln!("reconciled: {enter} enter, {update} update, {exit} exit ({unchanged} unchanged)");
     }
 
-    let exit_code = if dry_run { enter + update + exit } else { errors };
-    if exit_code != 0 {
-        std::process::exit(exit_code as i32);
-    }
-
-    Ok(())
+    Ok(RunStats { enter, update, exit, unchanged, errors })
 }

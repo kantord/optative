@@ -1,11 +1,6 @@
 use crate::builtins;
 
-pub struct EsEntry {
-    pub module_path: &'static str,
-    pub export_name: &'static str,
-    pub global_name: &'static str,
-    pub register: fn(&rquickjs::Ctx<'_>) -> rquickjs::Result<()>,
-}
+pub use optative_script::EsEntry;
 
 pub const ES_BUILTINS: &[EsEntry] = &[
     // esto module — Rust-backed (direct export = Rust global)
@@ -21,9 +16,9 @@ pub const ES_BUILTINS: &[EsEntry] = &[
     EsEntry { module_path: "esto", export_name: "prompt",   global_name: "__esto_prompt",   register: builtins::register_prompt },
     EsEntry { module_path: "esto", export_name: "ls",       global_name: "__esto_ls",       register: builtins::register_ls },
     // esto/fs module — Rust-backed (moved from esto_fs_globals.js in Step 5)
-    EsEntry { module_path: "esto/fs", export_name: "File",   global_name: "__esto_fs_File",   register: builtins::register_fs_file },
-    EsEntry { module_path: "esto/fs", export_name: "Folder", global_name: "__esto_fs_Folder", register: builtins::register_fs_folder },
-    EsEntry { module_path: "esto/fs", export_name: "GitRepo",global_name: "__esto_fs_GitRepo",register: builtins::register_fs_git_repo },
+    EsEntry { module_path: "esto/fs", export_name: "File",    global_name: "__esto_fs_File",    register: builtins::register_fs_file },
+    EsEntry { module_path: "esto/fs", export_name: "Folder",  global_name: "__esto_fs_Folder",  register: builtins::register_fs_folder },
+    EsEntry { module_path: "esto/fs", export_name: "GitRepo", global_name: "__esto_fs_GitRepo", register: builtins::register_fs_git_repo },
 ];
 
 pub fn register_builtins(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
@@ -31,17 +26,4 @@ pub fn register_builtins(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
         (entry.register)(ctx)?;
     }
     Ok(())
-}
-
-pub fn synthetic_module_source_for_entries(entries: &[&EsEntry]) -> String {
-    let bindings: Vec<String> = entries
-        .iter()
-        .map(|e| format!("const {} = {};", e.export_name, e.global_name))
-        .collect();
-    let exports: Vec<&str> = entries.iter().map(|e| e.export_name).collect();
-    format!(
-        "{} export {{ {} }};",
-        bindings.join(" "),
-        exports.join(", ")
-    )
 }

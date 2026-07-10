@@ -5,7 +5,7 @@ use rquickjs::function::{Function, Rest};
 use rquickjs::{Array, Ctx, FromJs, Object, Value};
 use sha2::{Digest, Sha256};
 
-use crate::js_runtime::serde_json_simple_array;
+use optative_script::serde_json_simple_array;
 
 static NEXT_KIND_ID: AtomicU32 = AtomicU32::new(0);
 

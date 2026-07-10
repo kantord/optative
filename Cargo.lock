@@ -368,6 +368,7 @@ dependencies = [
  "notify",
  "optative",
  "optative-process-pool",
+ "optative-script",
  "oxc_allocator",
  "oxc_codegen",
  "oxc_parser",
@@ -859,6 +860,22 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "optative-script"
+version = "0.0.1"
+dependencies = [
+ "oxc_allocator",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_resolver",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "rquickjs",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
