@@ -9,8 +9,6 @@ use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
 
-// ── resolver ──────────────────────────────────────────────────────────────────
-
 struct ScriptResolver {
     base_dir: PathBuf,
 }
@@ -34,16 +32,12 @@ impl Resolver for ScriptResolver {
     }
 }
 
-// ── loader ────────────────────────────────────────────────────────────────────
-
 struct ScriptLoader;
 
 impl Loader for ScriptLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
         let source = std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
-        let source = if name.ends_with(".jsx") || name.ends_with(".tsx")
-            || name.ends_with(".ts") || name.ends_with(".mts")
-        {
+        let source = if is_script_file(name) {
             transform_source(&source, name)
         } else {
             source
@@ -52,7 +46,9 @@ impl Loader for ScriptLoader {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+fn is_script_file(name: &str) -> bool {
+    matches!(name.rsplit_once('.').map(|(_, e)| e), Some("jsx" | "tsx" | "ts" | "mts"))
+}
 
 pub fn serde_json_simple_array(items: &[String]) -> String {
     let inner: Vec<String> = items
@@ -120,8 +116,6 @@ fn check_prompt(key: &str, context: &[String], context_data: &[String], val: Val
     Ok(())
 }
 
-// ── Leaf ──────────────────────────────────────────────────────────────────────
-
 struct Leaf<'js> {
     kind_id: u32,
     kind: Object<'js>,
@@ -129,8 +123,6 @@ struct Leaf<'js> {
     context: Vec<String>,
     context_data: Vec<String>,
 }
-
-// ── reduce ────────────────────────────────────────────────────────────────────
 
 fn reduce<'js>(
     ctx: &Ctx<'js>,
@@ -209,22 +201,12 @@ fn reduce<'js>(
     Err(rquickjs::Error::Unknown)
 }
 
-// ── reconcile ─────────────────────────────────────────────────────────────────
-
 pub struct RunStats {
     pub enter: usize,
     pub update: usize,
     pub exit: usize,
     pub unchanged: usize,
     pub errors: usize,
-}
-
-struct ReconcileResult {
-    enter: usize,
-    update: usize,
-    exit: usize,
-    unchanged: usize,
-    errors: usize,
 }
 
 fn call_lifecycle<'js>(
@@ -267,8 +249,8 @@ fn reconcile_kind<'js>(
     leaves: Vec<Leaf<'js>>,
     dry_run: bool,
     quiet: bool,
-) -> rquickjs::Result<ReconcileResult> {
-    let mut r = ReconcileResult { enter: 0, update: 0, exit: 0, unchanged: 0, errors: 0 };
+) -> rquickjs::Result<RunStats> {
+    let mut r = RunStats { enter: 0, update: 0, exit: 0, unchanged: 0, errors: 0 };
 
     let observe_fn: Function = kind.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
@@ -323,8 +305,6 @@ fn reconcile_kind<'js>(
     Ok(r)
 }
 
-// ── run_script ────────────────────────────────────────────────────────────────
-
 pub fn run_script(
     path: &str,
     entries: &[crate::EsEntry],
@@ -339,8 +319,7 @@ pub fn run_script(
     let path_str = abs_path.to_str()
         .ok_or_else(|| crate::ScriptError::Worker("non-UTF8 file path".into()))?
         .to_string();
-    let needs_transform = path_str.ends_with(".jsx") || path_str.ends_with(".tsx")
-        || path_str.ends_with(".ts") || path_str.ends_with(".mts");
+    let needs_transform = is_script_file(&path_str);
     let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
 
     let runtime = Runtime::new().map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
@@ -399,22 +378,18 @@ pub fn run_script(
                 entry.1.push(leaf);
             }
 
-            let mut total_enter = 0usize;
-            let mut total_update = 0usize;
-            let mut total_exit = 0usize;
-            let mut total_unchanged = 0usize;
-            let mut total_errors = 0usize;
+            let mut stats = RunStats { enter: 0, update: 0, exit: 0, unchanged: 0, errors: 0 };
 
             for (_, (kind_obj, kind_leaves)) in by_kind {
                 let res = reconcile_kind(&ctx, &kind_obj, kind_leaves, dry_run, quiet)?;
-                total_enter += res.enter;
-                total_update += res.update;
-                total_exit += res.exit;
-                total_unchanged += res.unchanged;
-                total_errors += res.errors;
+                stats.enter += res.enter;
+                stats.update += res.update;
+                stats.exit += res.exit;
+                stats.unchanged += res.unchanged;
+                stats.errors += res.errors;
             }
 
-            Ok((total_enter, total_update, total_exit, total_unchanged, total_errors))
+            Ok((stats.enter, stats.update, stats.exit, stats.unchanged, stats.errors))
         })
         .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 

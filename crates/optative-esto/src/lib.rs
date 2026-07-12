@@ -183,8 +183,8 @@ impl WorkerPools {
     }
 }
 
-// (key, opaque_value) — key kept in state so exit can dispatch with it
-type HookState = (String, String);
+// key kept in state so exit can dispatch with it
+struct HookState { key: String, value: String }
 
 struct HookItem {
     key: String,
@@ -210,33 +210,33 @@ impl Lifecycle for HookItem {
                 pool.dispatch(format!("{}\t{}", self.key, self.value))?;
             }
         }
-        Ok((self.key, self.value))
+        Ok(HookState { key: self.key, value: self.value })
     }
 
     fn reconcile_self(self, state: &mut HookState, ctx: &mut WorkerPools, _: &mut ()) -> Result<(), EstoError> {
-        if state.1 != self.value {
+        if state.value != self.value {
             if !ctx.quiet {
-                eprintln!("[update] {} {:?} -> {:?}", self.key, state.1, self.value);
+                eprintln!("[update] {} {:?} -> {:?}", self.key, state.value, self.value);
             }
             ctx.update_count += 1;
             if !ctx.dry_run {
                 if let Some(pool) = ctx.update.as_mut() {
-                    pool.dispatch(format!("{}\t{}\t{}", self.key, state.1, self.value))?;
+                    pool.dispatch(format!("{}\t{}\t{}", self.key, state.value, self.value))?;
                 }
             }
-            state.1 = self.value;
+            state.value = self.value;
         }
         Ok(())
     }
 
     fn exit(state: HookState, ctx: &mut WorkerPools, _: &mut ()) -> Result<(), EstoError> {
         if !ctx.quiet {
-            eprintln!("[exit] {}", state.0);
+            eprintln!("[exit] {}", state.key);
         }
         ctx.exit_count += 1;
         if !ctx.dry_run {
             if let Some(pool) = ctx.exit.as_mut() {
-                pool.dispatch(format!("{}\t{}", state.0, state.1))?;
+                pool.dispatch(format!("{}\t{}", state.key, state.value))?;
             }
         }
         Ok(())
@@ -313,7 +313,7 @@ fn seed_from(cmd: &str) -> Result<Vec<(String, HookState)>, EstoError> {
     let from_items = run_command_for_pairs(cmd)?;
     Ok(from_items.into_iter().map(|item| {
         let key = item.key.clone();
-        (key.clone(), (key, item.value))
+        (key.clone(), HookState { key, value: item.value })
     }).collect())
 }
 
@@ -378,7 +378,7 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_tsv_lines, HookItem, WorkerPools};
+    use super::{parse_tsv_lines, HookItem, HookState, WorkerPools};
     use optative::{OptativeSet};
     use optative::reconcile::Reconcile;
 
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn reconcile_removed_item_increments_exit() {
-        let initial = vec![(String::from("k"), (String::from("k"), String::from("v")))];
+        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v") })];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
         let errors = set.reconcile(vec![], &mut pools, &mut ());
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn reconcile_changed_value_increments_update() {
-        let initial = vec![(String::from("k"), (String::from("k"), String::from("v1")))];
+        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v1") })];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
         let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v2".into() }], &mut pools, &mut ());
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn reconcile_unchanged_value_no_update() {
-        let initial = vec![(String::from("k"), (String::from("k"), String::from("v")))];
+        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v") })];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
         let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v".into() }], &mut pools, &mut ());
