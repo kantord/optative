@@ -1,11 +1,13 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use optative_script::tags;
+
 use rquickjs::function::{Function, Rest};
 use rquickjs::{Array, Ctx, Object, Value};
 use sha2::{Digest, Sha256};
 
-static NEXT_KIND_ID: AtomicU32 = AtomicU32::new(0);
+static NEXT_KIND_ID: AtomicU32 = AtomicU32::new(1);
 
 fn js_value_to_string<'js>(val: &Value<'js>) -> String {
     if let Some(s) = val.as_string() {
@@ -34,7 +36,7 @@ pub fn register_exists(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 
 pub fn register_read(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ctx.globals().set("__esto_read", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
-        std::fs::read_to_string(&path).map_err(|_| rquickjs::Error::Unknown)
+        std::fs::read_to_string(&path).map_err(rquickjs::Error::Io)
     })?)?;
     Ok(())
 }
@@ -49,14 +51,14 @@ pub fn register_hash(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 
 pub fn register_fragment(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("__estoFragment", true)?;
+    obj.set(tags::ESTO_FRAGMENT, true)?;
     ctx.globals().set("__esto_fragment", obj)?;
     Ok(())
 }
 
 pub fn register_context_marker(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("__estoContext", true)?;
+    obj.set(tags::ESTO_CONTEXT, true)?;
     ctx.globals().set("__esto_context", obj)?;
     Ok(())
 }
@@ -68,12 +70,10 @@ fn unit_fn<'js>(ctx: Ctx<'js>, def: Object<'js>) -> rquickjs::Result<Object<'js>
     }
     let id = NEXT_KIND_ID.fetch_add(1, Ordering::Relaxed);
     let result = Object::new(ctx.clone())?;
-    result.set("__estoKind", true)?;
-    result.set("__estoId", id)?;
+    result.set(tags::ESTO_KIND, true)?;
+    result.set(tags::ESTO_ID, id)?;
     // Copy all def properties into result (Object.assign semantics)
-    let js_object: Object<'js> = ctx.globals().get("Object")?;
-    let assign: Function<'js> = js_object.get("assign")?;
-    assign.call::<_, Value<'js>>((result.clone(), def))?;
+    object_assign(&ctx, result.clone(), def)?;
     Ok(result)
 }
 
@@ -101,8 +101,12 @@ pub fn register_prompt(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     Ok(())
 }
 
-fn sh_fn<'js>(strings: Value<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<String> {
-    let strings_obj = strings.as_object().ok_or(rquickjs::Error::Unknown)?;
+fn sh_fn<'js>(ctx: Ctx<'js>, strings: Value<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<String> {
+    let strings_obj = strings.as_object().ok_or_else(|| {
+        let err = ctx.eval::<Value, _>(r#"new Error("sh: first argument must be a template object")"#)
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+        ctx.throw(err)
+    })?;
     let raw: Array<'js> = strings_obj.get("raw")?;
     let mut cmd = raw.get::<String>(0).unwrap_or_default();
     for (i, val) in rest.0.iter().enumerate() {
@@ -115,9 +119,12 @@ fn sh_fn<'js>(strings: Value<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<S
         .arg("-c")
         .arg(&cmd)
         .output()
-        .map_err(|_| rquickjs::Error::Unknown)?;
+        .map_err(rquickjs::Error::Io)?;
     if !out.status.success() {
-        return Err(rquickjs::Error::Unknown);
+        return Err(rquickjs::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("sh: subprocess exited with {}", out.status),
+        )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -179,9 +186,9 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
 
     // Inspect type markers before moving type_arg
     let (is_fragment, is_context, is_kind) = if let Some(obj) = type_arg.as_object() {
-        let frag = obj.contains_key("__estoFragment")?;
-        let ctx_mark = obj.contains_key("__estoContext")?;
-        let kind = obj.contains_key("__estoKind")?;
+        let frag = obj.contains_key(tags::ESTO_FRAGMENT)?;
+        let ctx_mark = obj.contains_key(tags::ESTO_CONTEXT)?;
+        let kind = obj.contains_key(tags::ESTO_KIND)?;
         (frag, ctx_mark, kind)
     } else {
         (false, false, false)
@@ -189,14 +196,14 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
 
     if is_fragment {
         let obj = Object::new(ctx.clone())?;
-        obj.set("$fragment", true)?;
+        obj.set(tags::FRAG, true)?;
         obj.set("children", kids)?;
         return Ok(Value::from_object(obj));
     }
 
     if is_context {
         let obj = Object::new(ctx.clone())?;
-        obj.set("$context", true)?;
+        obj.set(tags::CTX, true)?;
         let (value_val, data_val) = if let Some(p) = props.as_object() {
             let v: Value<'js> = p.get("value")?;
             let value_out = if v.is_undefined() { Value::new_null(ctx.clone()) } else { v };
@@ -219,7 +226,7 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
 
     if is_kind {
         let obj = Object::new(ctx.clone())?;
-        obj.set("$kind", type_arg)?;
+        obj.set(tags::KIND, type_arg)?;
         let item = Object::new(ctx.clone())?;
         if let Some(p) = props.as_object() {
             object_assign(&ctx, item.clone(), p.clone())?;
@@ -230,7 +237,7 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
 
     if type_arg.is_function() {
         let obj = Object::new(ctx.clone())?;
-        obj.set("$component", type_arg)?;
+        obj.set(tags::COMPONENT, type_arg)?;
         let merged = Object::new(ctx.clone())?;
         if let Some(p) = props.as_object() {
             object_assign(&ctx, merged.clone(), p.clone())?;
@@ -240,7 +247,9 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
         return Ok(Value::from_object(obj));
     }
 
-    Err(rquickjs::Error::Unknown)
+    let err = ctx.eval::<Value, _>(r#"new TypeError("esto/h: unsupported element type — expected Fragment, Context, unit, or component function")"#)
+        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+    Err(ctx.throw(err))
 }
 
 pub fn register_h(ctx: &Ctx<'_>) -> rquickjs::Result<()> {

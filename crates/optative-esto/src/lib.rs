@@ -8,6 +8,10 @@ pub mod registry;
 pub mod watch;
 pub mod types;
 
+/// How many times a stateful worker may request shutdown before the dispatch is
+/// considered permanently failed. One retry lets a crashed worker respawn once.
+const MAX_WORKER_RETRIES: u8 = 1;
+
 use std::io::{BufRead, Write as IoWrite};
 use std::process::Stdio;
 use std::sync::mpsc;
@@ -45,6 +49,8 @@ pub enum EstoError {
     WorkerError(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("watch error: {0}")]
+    Watch(String),
 }
 
 struct WorkerHandle {
@@ -105,7 +111,7 @@ impl WorkerPool {
         if self.handle.is_none() {
             self.spawn()?;
         }
-        self.dispatch_with_retry(task_line, 1)
+        self.dispatch_with_retry(task_line, MAX_WORKER_RETRIES)
     }
 
     // Per-item invocation: sh -c "$cmd" _ key [value [old new]]
@@ -317,6 +323,15 @@ fn seed_from(cmd: &str) -> Result<Vec<(String, HookState)>, EstoError> {
     }).collect())
 }
 
+fn reconcile_step(set: &mut OptativeSet<HookItem>, config: &ReconcileConfig, pools: &mut WorkerPools) -> Result<(), EstoError> {
+    let to_items = run_command_for_pairs(&config.to)?;
+    let errors = set.reconcile(to_items, pools, &mut ());
+    for (key, err) in errors {
+        tracing::error!(key = %key, error = %err, "lifecycle error");
+    }
+    Ok(())
+}
+
 pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
     let mut pools = make_pools(&config);
 
@@ -326,11 +341,7 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
             None => vec![],
         };
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
-        let to_items = run_command_for_pairs(&config.to)?;
-        let errors = set.reconcile(to_items, &mut pools, &mut ());
-        for (key, err) in &errors {
-            tracing::error!(key = %key, error = %err, "lifecycle error");
-        }
+        reconcile_step(&mut set, &config, &mut pools)?;
         let unchanged = (set.iter().count() as u64)
             .saturating_sub(pools.enter_count)
             .saturating_sub(pools.update_count);
@@ -355,11 +366,7 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
     let mut step: u64 = 0;
 
     loop {
-        let to_items = run_command_for_pairs(&config.to)?;
-        let errors = set.reconcile(to_items, &mut pools, &mut ());
-        for (key, err) in errors {
-            tracing::error!(key = %key, error = %err, "lifecycle error");
-        }
+        reconcile_step(&mut set, &config, &mut pools)?;
 
         step += 1;
         if let Some(n) = config.reingest_every {
@@ -377,20 +384,8 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{parse_tsv_lines, HookItem, HookState, WorkerPools};
-    use optative::{OptativeSet};
-    use optative::reconcile::Reconcile;
-
-    fn dry_pools() -> WorkerPools {
-        WorkerPools {
-            enter: None, exit: None, update: None,
-            quiet: true, dry_run: true,
-            enter_count: 0, exit_count: 0, update_count: 0,
-        }
-    }
-
-    // ── parse_tsv_lines ──────────────────────────────────────────────────────
+mod tsv_parsing {
+    use super::{parse_tsv_lines};
 
     #[test]
     fn tsv_key_value_pair() {
@@ -431,8 +426,21 @@ mod tests {
         // The line is trimmed before splitting, so key = "foo", value = "bar  "
         assert_eq!(items[0].key, "foo");
     }
+}
 
-    // ── reconcile counting ───────────────────────────────────────────────────
+#[cfg(test)]
+mod reconcile {
+    use super::{HookItem, HookState, WorkerPools};
+    use optative::OptativeSet;
+    use optative::reconcile::Reconcile;
+
+    fn dry_pools() -> WorkerPools {
+        WorkerPools {
+            enter: None, exit: None, update: None,
+            quiet: true, dry_run: true,
+            enter_count: 0, exit_count: 0, update_count: 0,
+        }
+    }
 
     #[test]
     fn reconcile_new_item_increments_enter() {

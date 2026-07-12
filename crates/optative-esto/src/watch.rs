@@ -25,14 +25,14 @@ pub fn watch_file(
                 let _ = tx_watcher.send(());
             }
         })
-        .map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+        .map_err(|e| crate::EstoError::Watch(e.to_string()))?;
 
     for trigger in &triggers {
         match trigger {
             WatchTrigger::FsPath(path) => {
                 watcher
                     .watch(path, RecursiveMode::Recursive)
-                    .map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+                    .map_err(|e| crate::EstoError::Watch(e.to_string()))?;
             }
             WatchTrigger::GitCommit => {
                 // Watch .git/refs/heads — updated on every local commit.
@@ -40,7 +40,7 @@ pub fn watch_file(
                 if p.exists() {
                     watcher
                         .watch(&p, RecursiveMode::Recursive)
-                        .map_err(|e| crate::EstoError::WorkerError(e.to_string()))?;
+                        .map_err(|e| crate::EstoError::Watch(e.to_string()))?;
                 }
             }
         }

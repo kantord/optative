@@ -81,6 +81,13 @@ struct Cli {
     fail_on_change: bool,
 }
 
+fn require_value<'a>(iter: &mut impl Iterator<Item = &'a String>, flag: &str, usage: &str) -> &'a String {
+    iter.next().unwrap_or_else(|| {
+        eprintln!("esto: {flag} requires a value\n{usage}");
+        std::process::exit(1);
+    })
+}
+
 fn parse_duration(s: &str) -> Result<Duration, String> {
     if let Some(rest) = s.strip_suffix("ms") {
         rest.parse::<u64>()
@@ -118,10 +125,7 @@ fn main() {
                 "--dry-run" => dry_run = true,
                 "--quiet" => quiet = true,
                 "--on" => {
-                    let val = args_iter.next().unwrap_or_else(|| {
-                        eprintln!("esto watch: --on requires a value");
-                        std::process::exit(1);
-                    });
+                    let val = require_value(&mut args_iter, "--on", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
                     if val == "git-commit" {
                         triggers.push(esto::watch::WatchTrigger::GitCommit);
                     } else if let Some(path) = val.strip_prefix("inotify:").or_else(|| val.strip_prefix("fs:")) {
@@ -132,10 +136,7 @@ fn main() {
                     }
                 }
                 "--every" => {
-                    let val = args_iter.next().unwrap_or_else(|| {
-                        eprintln!("esto watch: --every requires a value");
-                        std::process::exit(1);
-                    });
+                    let val = require_value(&mut args_iter, "--every", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
                     interval = Some(parse_duration(val).unwrap_or_else(|e| {
                         eprintln!("esto watch: {e}");
                         std::process::exit(1);
@@ -167,10 +168,7 @@ fn main() {
         while let Some(arg) = args_iter.next() {
             match arg.as_str() {
                 "--out" => {
-                    let val = args_iter.next().unwrap_or_else(|| {
-                        eprintln!("esto {subcommand}: --out requires a directory path");
-                        std::process::exit(1);
-                    });
+                    let val = require_value(&mut args_iter, "--out", "Usage: esto types [--out <dir>]");
                     out_dir = std::path::PathBuf::from(val);
                 }
                 other => {

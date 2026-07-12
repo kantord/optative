@@ -1,5 +1,10 @@
 use std::path::Path;
 
+/// Circuit-breaker: maximum number of managed files that may be pruned in one supervisor pass.
+const PRUNE_MAX_ABS: usize = 10;
+/// Circuit-breaker: maximum fraction of the managed set that may be pruned in one supervisor pass.
+const PRUNE_MAX_PCT: f64 = 0.5;
+
 use rquickjs::function::Function;
 use rquickjs::{Ctx, FromJs, Object, Value};
 use sha2::{Digest, Sha256};
@@ -107,7 +112,7 @@ fn fs_folder_fn<'js>(ctx: Ctx<'js>, props: Object<'js>) -> rquickjs::Result<Valu
     if !name_str.is_empty() {
         let cwd = std::env::current_dir()
             .map(|p| p.to_str().unwrap_or(".").to_owned())
-            .map_err(|_| rquickjs::Error::Unknown)?;
+            .map_err(rquickjs::Error::Io)?;
         return scope_supervise(&ctx, &cwd, &name_str, render);
     }
 
@@ -124,11 +129,14 @@ fn fs_git_repo_fn<'js>(ctx: Ctx<'js>, props: Object<'js>) -> rquickjs::Result<Va
     let root: String = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
-        .map_err(|_| rquickjs::Error::Unknown)
+        .map_err(rquickjs::Error::Io)
         .and_then(|out| if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
         } else {
-            Err(rquickjs::Error::Unknown)
+            Err(rquickjs::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("git rev-parse exited with {}", out.status),
+            )))
         })?;
     let children: Value<'js> = props.get("children")?;
     let render: Function<'js> = render_prop(&ctx, &children)?;
@@ -271,8 +279,6 @@ fn scope_supervise<'js>(ctx: &Ctx<'js>, parent_dir: &str, name: &str, render: Fu
 
     // Circuit breaker: too many pruned
     let prune_count = scope_rels.iter().filter(|r| !claim_map.contains_key(*r)).count();
-    const PRUNE_MAX_ABS: usize = 10;
-    const PRUNE_MAX_PCT: f64 = 0.5;
     if prune_count > PRUNE_MAX_ABS ||
        (!scope_rels.is_empty() && prune_count as f64 / scope_rels.len() as f64 > PRUNE_MAX_PCT) {
         return Err(throw_js(ctx, &format!(

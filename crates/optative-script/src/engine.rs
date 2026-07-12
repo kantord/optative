@@ -8,6 +8,14 @@ use rquickjs::{Array, Context, Ctx, FromJs, Module, Object, Runtime, Value};
 use sha2::{Digest, Sha256};
 
 use crate::jsx::transform_source;
+use crate::tags;
+
+/// SHA-256 prefix length used as a short context identifier in task file names.
+/// 12 hex chars give ~48 bits — low collision risk for typical context set sizes.
+const CONTEXT_HASH_LEN: usize = 12;
+/// Maximum number of characters taken from the first line of a context entry
+/// for the human-readable reference comment in task files.
+const CONTEXT_PREVIEW_LEN: usize = 60;
 
 struct ScriptResolver {
     base_dir: PathBuf,
@@ -60,7 +68,7 @@ pub fn serde_json_simple_array(items: &[String]) -> String {
 
 fn sha12(s: &str) -> String {
     let hash = Sha256::digest(s.as_bytes());
-    format!("{hash:x}")[..12].to_string()
+    format!("{hash:x}")[..CONTEXT_HASH_LEN].to_string()
 }
 
 fn emit_task(key: &str, context: &[String], context_data: &[String], body: &str) -> std::io::Result<()> {
@@ -73,7 +81,7 @@ fn emit_task(key: &str, context: &[String], context_data: &[String], body: &str)
         if !Path::new(&path).exists() {
             let _ = std::fs::write(&path, entry);
         }
-        let first = entry.lines().next().unwrap_or("").chars().take(60).collect::<String>();
+        let first = entry.lines().next().unwrap_or("").chars().take(CONTEXT_PREVIEW_LEN).collect::<String>();
         format!("  {path} — {first}")
     }).collect();
 
@@ -110,10 +118,17 @@ fn await_val<'js, T: FromJs<'js>>(val: Value<'js>) -> rquickjs::Result<T> {
 fn check_prompt(key: &str, context: &[String], context_data: &[String], val: Value) -> rquickjs::Result<()> {
     if let Some(obj) = val.as_object() {
         if let Ok(prompt_str) = obj.get::<_, String>("$prompt") {
-            emit_task(key, context, context_data, &prompt_str).map_err(|_| rquickjs::Error::Unknown)?;
+            emit_task(key, context, context_data, &prompt_str).map_err(rquickjs::Error::Io)?;
         }
     }
     Ok(())
+}
+
+struct DesiredEntry<'js> {
+    item: Value<'js>,
+    value_str: String,
+    context: Vec<String>,
+    context_data: Vec<String>,
 }
 
 struct Leaf<'js> {
@@ -145,7 +160,7 @@ fn reduce<'js>(
         return Ok(leaves);
     }
     if let Some(obj) = node.as_object() {
-        if obj.get::<_, bool>("$fragment").unwrap_or(false) {
+        if obj.get::<_, bool>(tags::FRAG).unwrap_or(false) {
             let children: Array = obj.get("children")?;
             let mut leaves = vec![];
             for i in 0..children.len() {
@@ -154,7 +169,7 @@ fn reduce<'js>(
             }
             return Ok(leaves);
         }
-        if obj.get::<_, bool>("$context").unwrap_or(false) {
+        if obj.get::<_, bool>(tags::CTX).unwrap_or(false) {
             let v: Value = obj.get("value")?;
             let new_ctx = if v.is_null() || v.is_undefined() {
                 context.clone()
@@ -183,22 +198,30 @@ fn reduce<'js>(
             }
             return Ok(leaves);
         }
-        let comp_val: Value = obj.get("$component")?;
+        let comp_val: Value = obj.get(tags::COMPONENT)?;
         if comp_val.is_function() {
-            let comp_fn = comp_val.into_function().ok_or(rquickjs::Error::Unknown)?;
+            let comp_fn = comp_val.into_function().ok_or_else(|| rquickjs::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::Other, "$component is not callable")
+            ))?;
             let props: Value = obj.get("props")?;
             let result: Value = comp_fn.call::<(Value,), Value>((props,))?;
             return reduce(ctx, result, context, context_data);
         }
-        let kind_val: Value = obj.get("$kind")?;
+        let kind_val: Value = obj.get(tags::KIND)?;
         if kind_val.is_object() {
-            let kind_obj = kind_val.into_object().ok_or(rquickjs::Error::Unknown)?;
-            let kind_id: u32 = kind_obj.get("__estoId").unwrap_or(0);
+            let kind_obj = kind_val.into_object().ok_or_else(|| rquickjs::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::Other, "$kind is not an object")
+            ))?;
+            let kind_id: u32 = kind_obj.get(tags::ESTO_ID).unwrap_or(0);
             let item: Value = obj.get("item")?;
             return Ok(vec![Leaf { kind_id, kind: kind_obj, item, context, context_data }]);
         }
     }
-    Err(rquickjs::Error::Unknown)
+    {
+        let err = ctx.eval::<Value, _>(r#"new TypeError("esto: reduce encountered an unknown node type")"#)
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+        Err(ctx.throw(err))
+    }
 }
 
 pub struct RunStats {
@@ -209,8 +232,24 @@ pub struct RunStats {
     pub errors: usize,
 }
 
+fn call_and_check<'js>(
+    func: Function<'js>,
+    args: Vec<Value<'js>>,
+    key: &str,
+    context: &[String],
+    context_data: &[String],
+) -> rquickjs::Result<()> {
+    let raw: Value = match args.len() {
+        0 => func.call::<(), Value>(()),
+        1 => func.call::<(Value,), Value>((args[0].clone(),)),
+        2 => func.call::<(Value, Value), Value>((args[0].clone(), args[1].clone())),
+        _ => return Ok(()),
+    }?;
+    let resolved: Value = await_val(raw)?;
+    check_prompt(key, context, context_data, resolved)
+}
+
 fn call_lifecycle<'js>(
-    _ctx: &Ctx<'js>,
     kind: &Object<'js>,
     method: &str,
     args: Vec<Value<'js>>,
@@ -224,22 +263,9 @@ fn call_lifecycle<'js>(
     let fn_val: Value = match kind.get(method) { Ok(v) => v, Err(_) => return };
     if !fn_val.is_function() { return; }
     let func = match fn_val.into_function() { Some(f) => f, None => return };
-    let result: rquickjs::Result<Value> = match args.len() {
-        0 => func.call::<(), Value>(()),
-        1 => func.call::<(Value,), Value>((args[0].clone(),)),
-        2 => func.call::<(Value, Value), Value>((args[0].clone(), args[1].clone())),
-        _ => return,
-    };
-    match result {
-        Err(e) => { eprintln!("[error] {key}: {e}"); *errors += 1; }
-        Ok(raw) => match await_val::<Value>(raw) {
-            Err(e) => { eprintln!("[error] {key}: {e}"); *errors += 1; }
-            Ok(resolved) => {
-                if let Err(e) = check_prompt(key, context, context_data, resolved) {
-                    eprintln!("[error] {key}: {e}"); *errors += 1;
-                }
-            }
-        }
+    if let Err(e) = call_and_check(func, args, key, context, context_data) {
+        eprintln!("[error] {key}: {e}");
+        *errors += 1;
     }
 }
 
@@ -255,7 +281,11 @@ fn reconcile_kind<'js>(
     let observe_fn: Function = kind.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
     let obs_val: Value = await_val(obs_raw)?;
-    let obs_arr = obs_val.into_array().ok_or(rquickjs::Error::Unknown)?;
+    let obs_arr = obs_val.into_array().ok_or_else(|| {
+        let err = ctx.eval::<Value, _>(r#"new TypeError("esto: observe() must return an array")"#)
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+        ctx.throw(err)
+    })?;
 
     let key_fn: Function = kind.get("key")?;
     let value_fn: Function = kind.get("value")?;
@@ -268,25 +298,25 @@ fn reconcile_kind<'js>(
         current.insert(k, (item, v));
     }
 
-    let mut desired: HashMap<String, (Value<'js>, String, Vec<String>, Vec<String>)> = HashMap::new();
+    let mut desired: HashMap<String, DesiredEntry<'js>> = HashMap::new();
     for leaf in leaves {
         let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
         let v: String = value_fn.call::<(Value,), String>((leaf.item.clone(),))?;
-        desired.insert(k, (leaf.item, v, leaf.context, leaf.context_data));
+        desired.insert(k, DesiredEntry { item: leaf.item, value_str: v, context: leaf.context, context_data: leaf.context_data });
     }
 
-    for (k, (d_item, d_val, ctx_chain, ctx_data)) in &desired {
+    for (k, entry) in &desired {
         match current.get(k) {
             None => {
                 if !quiet { eprintln!("[enter] {k}"); }
                 r.enter += 1;
-                call_lifecycle(ctx, kind, "enter", vec![d_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
+                call_lifecycle(kind, "enter", vec![entry.item.clone()], k, &entry.context, &entry.context_data, dry_run, &mut r.errors);
             }
             Some((c_item, c_val)) => {
-                if d_val != c_val {
+                if entry.value_str != *c_val {
                     if !quiet { eprintln!("[update] {k}"); }
                     r.update += 1;
-                    call_lifecycle(ctx, kind, "update", vec![d_item.clone(), c_item.clone()], k, ctx_chain, ctx_data, dry_run, &mut r.errors);
+                    call_lifecycle(kind, "update", vec![entry.item.clone(), c_item.clone()], k, &entry.context, &entry.context_data, dry_run, &mut r.errors);
                 } else {
                     r.unchanged += 1;
                 }
@@ -298,32 +328,15 @@ fn reconcile_kind<'js>(
         if !desired.contains_key(k) {
             if !quiet { eprintln!("[exit] {k}"); }
             r.exit += 1;
-            call_lifecycle(ctx, kind, "exit", vec![c_item.clone()], k, &[], &[], dry_run, &mut r.errors);
+            call_lifecycle(kind, "exit", vec![c_item.clone()], k, &[], &[], dry_run, &mut r.errors);
         }
     }
 
     Ok(r)
 }
 
-pub fn run_script(
-    path: &str,
-    entries: &[crate::EsEntry],
-    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
-    dry_run: bool,
-    quiet: bool,
-) -> Result<RunStats, crate::ScriptError> {
-    let abs_path = std::path::Path::new(path)
-        .canonicalize()
-        .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
-    let base_dir = abs_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let path_str = abs_path.to_str()
-        .ok_or_else(|| crate::ScriptError::Worker("non-UTF8 file path".into()))?
-        .to_string();
-    let needs_transform = is_script_file(&path_str);
-    let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
-
-    let runtime = Runtime::new().map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
-
+fn build_runtime(entries: &[crate::EsEntry], base_dir: PathBuf) -> rquickjs::Result<(Runtime, Context)> {
+    let runtime = Runtime::new()?;
     let mut module_groups: HashMap<&'static str, Vec<&crate::EsEntry>> = HashMap::new();
     for e in entries {
         module_groups.entry(e.module_path).or_default().push(e);
@@ -338,39 +351,79 @@ pub fn run_script(
         (builtin_resolver, ScriptResolver { base_dir }),
         (builtin_loader, ScriptLoader),
     );
+    let context = Context::full(&runtime)?;
+    Ok((runtime, context))
+}
 
-    let context = Context::full(&runtime).map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
+fn collect_leaves<'js>(ctx: &Ctx<'js>, path_str: &str, src: &str, is_jsx: bool) -> rquickjs::Result<Vec<Leaf<'js>>> {
+    let module = Module::declare(ctx.clone(), path_str.to_string(), src.to_string())?;
+    let (module, promise) = module.eval()?;
+    promise.finish::<()>()?;
+
+    let default_val: Value = module.get("default")?;
+
+    let leaves = if is_jsx {
+        let root_fn = default_val.into_function().ok_or_else(|| {
+            let err = ctx.eval::<Value, _>(r#"new TypeError("esto: JSX script default export must be a function")"#)
+                .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+            ctx.throw(err)
+        })?;
+        let root: Value = root_fn.call::<(), Value>(())?;
+        reduce(ctx, root, vec![], vec![])?
+    } else {
+        let target = default_val.into_object().ok_or_else(|| {
+            let err = ctx.eval::<Value, _>(r#"new TypeError("esto: non-JSX script default export must be an object")"#)
+                .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+            ctx.throw(err)
+        })?;
+        let desired_fn: Function = target.get("desired")?;
+        let desired_raw: Value = desired_fn.call::<(), Value>(())?;
+        let desired_val: Value = await_val(desired_raw)?;
+        let desired_arr = desired_val.into_array().ok_or_else(|| {
+            let err = ctx.eval::<Value, _>(r#"new TypeError("esto: desired() must return an array")"#)
+                .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+            ctx.throw(err)
+        })?;
+        let mut leaves = Vec::new();
+        for i in 0..desired_arr.len() {
+            let item: Value = desired_arr.get(i)?;
+            leaves.push(Leaf { kind_id: 0, kind: target.clone(), item, context: vec![], context_data: vec![] });
+        }
+        leaves
+    };
+
+    Ok(leaves)
+}
+
+pub fn run_script(
+    path: &str,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+) -> Result<RunStats, crate::ScriptError> {
+    let abs_path = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(crate::ScriptError::Io)?;
+    let base_dir = abs_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let path_str = abs_path.to_str()
+        .ok_or_else(|| crate::ScriptError::InvalidPath(abs_path.to_string_lossy().into_owned()))?
+        .to_string();
+    let needs_transform = is_script_file(&path_str);
+    let is_jsx = path_str.ends_with(".jsx") || path_str.ends_with(".tsx");
+
+    let src_raw = std::fs::read_to_string(&path_str)
+        .map_err(crate::ScriptError::Io)?;
+    let src = if needs_transform { transform_source(&src_raw, &path_str) } else { src_raw };
+
+    let (_runtime, context) = build_runtime(entries, base_dir)
+        .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
     let (enter, update, exit, unchanged, errors) = context
         .with(|ctx| -> rquickjs::Result<(usize, usize, usize, usize, usize)> {
             setup(&ctx)?;
 
-            let src = std::fs::read_to_string(&path_str)
-                .map_err(|_| rquickjs::Error::new_loading(&path_str))?;
-            let src = if needs_transform { transform_source(&src, &path_str) } else { src };
-            let module = Module::declare(ctx.clone(), path_str.clone(), src)?;
-            let (module, promise) = module.eval()?;
-            promise.finish::<()>()?;
-
-            let default_val: Value = module.get("default")?;
-
-            let leaves: Vec<Leaf> = if is_jsx {
-                let root_fn = default_val.into_function().ok_or(rquickjs::Error::Unknown)?;
-                let root: Value = root_fn.call::<(), Value>(())?;
-                reduce(&ctx, root, vec![], vec![])?
-            } else {
-                let target = default_val.into_object().ok_or(rquickjs::Error::Unknown)?;
-                let desired_fn: Function = target.get("desired")?;
-                let desired_raw: Value = desired_fn.call::<(), Value>(())?;
-                let desired_val: Value = await_val(desired_raw)?;
-                let desired_arr = desired_val.into_array().ok_or(rquickjs::Error::Unknown)?;
-                let mut leaves = Vec::new();
-                for i in 0..desired_arr.len() {
-                    let item: Value = desired_arr.get(i)?;
-                    leaves.push(Leaf { kind_id: 0, kind: target.clone(), item, context: vec![], context_data: vec![] });
-                }
-                leaves
-            };
+            let leaves = collect_leaves(&ctx, &path_str, &src, is_jsx)?;
 
             let mut by_kind: HashMap<u32, (Object, Vec<Leaf>)> = HashMap::new();
             for leaf in leaves {

@@ -3,6 +3,7 @@
 //! CLI; expect breaking changes between 0.x releases.
 
 pub mod jsx;
+pub mod tags;
 mod engine;
 
 // Re-export rquickjs primitives so plugin authors don't need a direct rquickjs dep.
@@ -35,6 +36,10 @@ pub fn synthetic_module_source_for_entries(entries: &[&EsEntry]) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
-    #[error("worker error: {0}")]
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("invalid path: {0}")]
+    InvalidPath(String),
+    #[error("runtime error: {0}")]
     Worker(String),
 }

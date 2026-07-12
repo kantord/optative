@@ -43,31 +43,26 @@ pub fn transform_source(source: &str, path: &str) -> String {
     Codegen::new().build(&program).code
 }
 
-// Keep for existing tests and callers that don't have a path.
-pub fn transform_jsx(source: &str) -> String {
-    transform_source(source, "input.jsx")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn self_closing_element() {
-        let out = transform_jsx(r#"<Foo bar="baz" />"#);
+        let out = transform_source(r#"<Foo bar="baz" />"#, "test.jsx");
         assert!(out.contains("h("), "expected h() call, got: {out}");
         assert!(out.contains("\"Foo\"") || out.contains("Foo"), "expected Foo, got: {out}");
     }
 
     #[test]
     fn fragment() {
-        let out = transform_jsx(r#"<>hello</>  "#);
+        let out = transform_source(r#"<>hello</>  "#, "test.jsx");
         assert!(out.contains("Fragment"), "expected Fragment, got: {out}");
     }
 
     #[test]
     fn pragma_is_h_not_jsx() {
-        let out = transform_jsx(r#"<A />"#);
+        let out = transform_source(r#"<A />"#, "test.jsx");
         assert!(!out.contains("_jsx"), "should not contain _jsx, got: {out}");
         assert!(out.contains("h("), "expected h(), got: {out}");
     }
