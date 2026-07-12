@@ -156,10 +156,10 @@ fn check_prompt(
     context_data: &[String],
     val: Value,
 ) -> rquickjs::Result<()> {
-    if let Some(obj) = val.as_object() {
-        if let Ok(prompt_str) = obj.get::<_, String>("$prompt") {
-            emit_task(key, context, context_data, &prompt_str).map_err(rquickjs::Error::Io)?;
-        }
+    if let Some(obj) = val.as_object()
+        && let Ok(prompt_str) = obj.get::<_, String>("$prompt")
+    {
+        emit_task(key, context, context_data, &prompt_str).map_err(rquickjs::Error::Io)?;
     }
     Ok(())
 }
@@ -223,12 +223,12 @@ fn reduce<'js>(
             };
             let data_val: Value = obj.get("data").unwrap_or(Value::new_undefined(ctx.clone()));
             let mut new_ctx_data = context_data.clone();
-            if !data_val.is_null() && !data_val.is_undefined() {
-                if let Some(s) = data_val.as_string() {
-                    if let Ok(s) = s.to_string() {
-                        new_ctx_data.push(s);
-                    }
-                }
+            if !data_val.is_null()
+                && !data_val.is_undefined()
+                && let Some(s) = data_val.as_string()
+                && let Ok(s) = s.to_string()
+            {
+                new_ctx_data.push(s);
             }
             let children: Array = obj.get("children")?;
             let mut leaves = vec![];
@@ -302,6 +302,7 @@ fn call_and_check<'js>(
     check_prompt(key, context, context_data, resolved)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn call_lifecycle<'js>(
     kind: &Object<'js>,
     method: &str,
