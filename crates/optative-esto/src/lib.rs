@@ -1,3 +1,8 @@
+//! **Experimental.** Hook-based reconciliation CLI built on
+//! [optative](https://github.com/kantord/optative) and the scripting engine
+//! extracted from [tauler](https://github.com/kantord/tauler). Expect breaking
+//! changes between 0.x releases.
+
 pub mod builtins;
 pub mod registry;
 pub mod watch;

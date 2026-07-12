@@ -1,3 +1,7 @@
+//! **Experimental.** QuickJS + oxc scripting engine extracted from
+//! [tauler](https://github.com/kantord/tauler). Drives the `esto` reconciliation
+//! CLI; expect breaking changes between 0.x releases.
+
 pub mod jsx;
 mod engine;
 

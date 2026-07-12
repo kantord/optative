@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "QuickJS + oxc scripting engine for the optative reconciliation system."
+keywords = ["scripting", "quickjs", "jsx", "reconciler", "optative"]
+categories = ["scripting"]
 
 [dependencies]
 rquickjs = { version = "0.11", features = ["loader"] }
