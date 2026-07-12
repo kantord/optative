@@ -29,8 +29,14 @@ mod esto_run {
             .unwrap();
 
         assert!(status.success(), "esto run mirror.mjs should exit 0");
-        assert!(dir.path().join("out/alpha.txt").exists(), "alpha.txt should be created");
-        assert!(dir.path().join("out/beta.txt").exists(), "beta.txt should be created");
+        assert!(
+            dir.path().join("out/alpha.txt").exists(),
+            "alpha.txt should be created"
+        );
+        assert!(
+            dir.path().join("out/beta.txt").exists(),
+            "beta.txt should be created"
+        );
     }
 
     #[test]
@@ -45,8 +51,15 @@ mod esto_run {
             .unwrap();
 
         // 2 items enter → exit code 2
-        assert_eq!(status.code(), Some(2), "dry-run exit code should equal delta count");
-        assert!(!dir.path().join("out").exists(), "dry-run should not create any files");
+        assert_eq!(
+            status.code(),
+            Some(2),
+            "dry-run exit code should equal delta count"
+        );
+        assert!(
+            !dir.path().join("out").exists(),
+            "dry-run should not create any files"
+        );
     }
 
     #[test]
@@ -68,7 +81,10 @@ mod esto_run {
             .status()
             .unwrap();
 
-        assert!(status.success(), "second run on converged state should exit 0");
+        assert!(
+            status.success(),
+            "second run on converged state should exit 0"
+        );
     }
 
     #[test]
@@ -83,7 +99,10 @@ mod esto_run {
             .unwrap();
 
         assert!(status.success(), "esto run mirror.eso.jsx should exit 0");
-        assert!(dir.path().join("out/alpha.txt").exists(), "alpha.txt should be created");
+        assert!(
+            dir.path().join("out/alpha.txt").exists(),
+            "alpha.txt should be created"
+        );
     }
 
     #[test]
@@ -97,14 +116,23 @@ mod esto_run {
             .unwrap();
 
         assert!(status.success(), "esto run grounding.eso.jsx should exit 0");
-        assert!(dir.path().join("tasks/foo.md").exists(), "tasks/foo.md should be created");
-        assert!(dir.path().join("tasks/bar.md").exists(), "tasks/bar.md should be created");
+        assert!(
+            dir.path().join("tasks/foo.md").exists(),
+            "tasks/foo.md should be created"
+        );
+        assert!(
+            dir.path().join("tasks/bar.md").exists(),
+            "tasks/bar.md should be created"
+        );
 
         // Both leaves share the same two context entries → exactly 2 content-addressed context files
         let ctx_count = fs::read_dir(dir.path().join(".esto/context"))
             .unwrap()
             .count();
-        assert_eq!(ctx_count, 2, "context files should be deduped: 2 unique strings → 2 files");
+        assert_eq!(
+            ctx_count, 2,
+            "context files should be deduped: 2 unique strings → 2 files"
+        );
     }
 
     #[test]
@@ -118,9 +146,19 @@ mod esto_run {
             .unwrap();
 
         // 2 leaves enter → exit code 2
-        assert_eq!(status.code(), Some(2), "dry-run exit code should equal delta count");
-        assert!(!dir.path().join("tasks").exists(), "dry-run should not create tasks/");
-        assert!(!dir.path().join(".esto").exists(), "dry-run should not create .esto/");
+        assert_eq!(
+            status.code(),
+            Some(2),
+            "dry-run exit code should equal delta count"
+        );
+        assert!(
+            !dir.path().join("tasks").exists(),
+            "dry-run should not create tasks/"
+        );
+        assert!(
+            !dir.path().join(".esto").exists(),
+            "dry-run should not create .esto/"
+        );
     }
 
     #[test]
@@ -134,8 +172,14 @@ mod esto_run {
             .unwrap();
 
         assert!(status.success(), "esto run grounding.op.tsx should exit 0");
-        assert!(dir.path().join("tasks/foo.md").exists(), "tasks/foo.md should be created");
-        assert!(dir.path().join("tasks/bar.md").exists(), "tasks/bar.md should be created");
+        assert!(
+            dir.path().join("tasks/foo.md").exists(),
+            "tasks/foo.md should be created"
+        );
+        assert!(
+            dir.path().join("tasks/bar.md").exists(),
+            "tasks/bar.md should be created"
+        );
     }
 }
 
@@ -176,7 +220,11 @@ export default () => (
             .unwrap();
 
         // 2 root .txt files matched → dry-run exit code = 2
-        assert_eq!(status.code(), Some(2), "File glob '*.txt' should match exactly 2 root-level files");
+        assert_eq!(
+            status.code(),
+            Some(2),
+            "File glob '*.txt' should match exactly 2 root-level files"
+        );
     }
 
     #[test]
@@ -217,16 +265,31 @@ export default () => (
 
         assert!(status.success(), "supervisor run should exit 0");
         // Created
-        assert!(dir.path().join("docs/api/Bar.md").exists(), "Bar.md should be created");
+        assert!(
+            dir.path().join("docs/api/Bar.md").exists(),
+            "Bar.md should be created"
+        );
         let bar_content = fs::read_to_string(dir.path().join("docs/api/Bar.md")).unwrap();
-        assert!(bar_content.contains("Bar"), "Bar.md should contain desired content");
+        assert!(
+            bar_content.contains("Bar"),
+            "Bar.md should contain desired content"
+        );
         // Updated (printf writes whatever bytes sh receives; JS \n = newline)
         let index_content = fs::read_to_string(dir.path().join("docs/api/index.md")).unwrap();
-        assert!(index_content.contains("API"), "index.md should be updated with new content");
+        assert!(
+            index_content.contains("API"),
+            "index.md should be updated with new content"
+        );
         // Kept
-        assert!(dir.path().join("docs/api/notes.txt").exists(), "notes.txt should survive (claimed by *.txt)");
+        assert!(
+            dir.path().join("docs/api/notes.txt").exists(),
+            "notes.txt should survive (claimed by *.txt)"
+        );
         // Pruned
-        assert!(!dir.path().join("docs/api/Bogus.md").exists(), "Bogus.md should be pruned");
+        assert!(
+            !dir.path().join("docs/api/Bogus.md").exists(),
+            "Bogus.md should be pruned"
+        );
     }
 
     #[test]
@@ -253,9 +316,16 @@ export default () => (
             .unwrap();
 
         // dry-run: 1 exit (orphan.txt pruned) → exit code 1
-        assert_eq!(status.code(), Some(1), "dry-run should exit with delta count (1 prune)");
+        assert_eq!(
+            status.code(),
+            Some(1),
+            "dry-run should exit with delta count (1 prune)"
+        );
         // dry-run writes nothing
-        assert!(dir.path().join("owned/orphan.txt").exists(), "dry-run should not delete anything");
+        assert!(
+            dir.path().join("owned/orphan.txt").exists(),
+            "dry-run should not delete anything"
+        );
     }
 }
 
@@ -312,7 +382,11 @@ export default () => (
             .status()
             .unwrap();
 
-        assert_eq!(status.code(), Some(0), "esto type-check should exit 0 against the type-coverage fixture");
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "esto type-check should exit 0 against the type-coverage fixture"
+        );
     }
 
     #[test]
@@ -327,19 +401,52 @@ export default () => (
         assert!(status.success(), "esto types should exit 0");
 
         let dts = fs::read_to_string(dir.path().join("esto.d.ts")).unwrap();
-        assert!(dts.contains("declare module \"esto\""), "esto.d.ts should contain esto module");
-        assert!(dts.contains("declare module \"esto/fs\""), "esto.d.ts should contain esto/fs module");
-        assert!(dts.contains("declare namespace JSX"), "esto.d.ts should declare JSX namespace");
-        assert!(dts.contains("export function h("), "esto module should export h()");
-        assert!(dts.contains("export function unit"), "esto module should export unit");
-        assert!(dts.contains("export function exists"), "esto module should export exists");
-        assert!(dts.contains("export function GitRepo"), "esto/fs module should export GitRepo");
+        assert!(
+            dts.contains("declare module \"esto\""),
+            "esto.d.ts should contain esto module"
+        );
+        assert!(
+            dts.contains("declare module \"esto/fs\""),
+            "esto.d.ts should contain esto/fs module"
+        );
+        assert!(
+            dts.contains("declare namespace JSX"),
+            "esto.d.ts should declare JSX namespace"
+        );
+        assert!(
+            dts.contains("export function h("),
+            "esto module should export h()"
+        );
+        assert!(
+            dts.contains("export function unit"),
+            "esto module should export unit"
+        );
+        assert!(
+            dts.contains("export function exists"),
+            "esto module should export exists"
+        );
+        assert!(
+            dts.contains("export function GitRepo"),
+            "esto/fs module should export GitRepo"
+        );
 
         let tsconfig = fs::read_to_string(dir.path().join("tsconfig.esto.json")).unwrap();
-        assert!(tsconfig.contains("\"jsxFactory\": \"h\""), "tsconfig should set jsxFactory to h");
-        assert!(tsconfig.contains("\"noEmit\": true"), "tsconfig should set noEmit");
-        assert!(tsconfig.contains("*.op.tsx"), "tsconfig should include *.op.tsx");
-        assert!(tsconfig.contains("esto.d.ts"), "tsconfig should include esto.d.ts");
+        assert!(
+            tsconfig.contains("\"jsxFactory\": \"h\""),
+            "tsconfig should set jsxFactory to h"
+        );
+        assert!(
+            tsconfig.contains("\"noEmit\": true"),
+            "tsconfig should set noEmit"
+        );
+        assert!(
+            tsconfig.contains("*.op.tsx"),
+            "tsconfig should include *.op.tsx"
+        );
+        assert!(
+            tsconfig.contains("esto.d.ts"),
+            "tsconfig should include esto.d.ts"
+        );
     }
 }
 
@@ -351,7 +458,8 @@ mod tsv_cli {
         // --to produces one new item; --fail-on-change should make it exit 1
         let status = esto()
             .args([
-                "--to", "printf 'mykey\\tmyvalue\\n'",
+                "--to",
+                "printf 'mykey\\tmyvalue\\n'",
                 "--dry-run",
                 "--fail-on-change",
                 "--once",
@@ -360,7 +468,11 @@ mod tsv_cli {
             .status()
             .unwrap();
 
-        assert_eq!(status.code(), Some(1), "fail-on-change with delta should exit 1");
+        assert_eq!(
+            status.code(),
+            Some(1),
+            "fail-on-change with delta should exit 1"
+        );
     }
 
     #[test]
@@ -368,8 +480,10 @@ mod tsv_cli {
         // --from and --to both return the same item → no delta → exit 0
         let status = esto()
             .args([
-                "--from", "printf 'mykey\\tmyvalue\\n'",
-                "--to",   "printf 'mykey\\tmyvalue\\n'",
+                "--from",
+                "printf 'mykey\\tmyvalue\\n'",
+                "--to",
+                "printf 'mykey\\tmyvalue\\n'",
                 "--fail-on-change",
                 "--once",
                 "--quiet",
@@ -377,6 +491,9 @@ mod tsv_cli {
             .status()
             .unwrap();
 
-        assert!(status.success(), "fail-on-change with no delta should exit 0");
+        assert!(
+            status.success(),
+            "fail-on-change with no delta should exit 0"
+        );
     }
 }

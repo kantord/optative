@@ -51,7 +51,10 @@ mod tests {
     fn self_closing_element() {
         let out = transform_source(r#"<Foo bar="baz" />"#, "test.jsx");
         assert!(out.contains("h("), "expected h() call, got: {out}");
-        assert!(out.contains("\"Foo\"") || out.contains("Foo"), "expected Foo, got: {out}");
+        assert!(
+            out.contains("\"Foo\"") || out.contains("Foo"),
+            "expected Foo, got: {out}"
+        );
     }
 
     #[test]
@@ -73,23 +76,29 @@ mod tests {
             r#"const x: number = 42; const el = <Foo bar="baz" />;"#,
             "input.tsx",
         );
-        assert!(!out.contains(": number"), "type annotation should be stripped");
+        assert!(
+            !out.contains(": number"),
+            "type annotation should be stripped"
+        );
         assert!(out.contains("h("), "JSX should be transformed to h()");
     }
 
     #[test]
     fn ts_strips_type_annotations_no_jsx() {
-        let out = transform_source(
-            r#"const x: number = 42; export default x;"#,
-            "input.ts",
+        let out = transform_source(r#"const x: number = 42; export default x;"#, "input.ts");
+        assert!(
+            !out.contains(": number"),
+            "type annotation should be stripped"
         );
-        assert!(!out.contains(": number"), "type annotation should be stripped");
     }
 
     #[test]
     fn op_tsx_extension_recognized() {
         let out = transform_source(r#"const n: number = 1; const el = <A />;"#, "foo.op.tsx");
-        assert!(!out.contains(": number"), "type annotation should be stripped");
+        assert!(
+            !out.contains(": number"),
+            "type annotation should be stripped"
+        );
         assert!(out.contains("h("), "JSX should be transformed");
     }
 }

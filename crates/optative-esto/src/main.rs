@@ -81,7 +81,11 @@ struct Cli {
     fail_on_change: bool,
 }
 
-fn require_value<'a>(iter: &mut impl Iterator<Item = &'a String>, flag: &str, usage: &str) -> &'a String {
+fn require_value<'a>(
+    iter: &mut impl Iterator<Item = &'a String>,
+    flag: &str,
+    usage: &str,
+) -> &'a String {
     iter.next().unwrap_or_else(|| {
         eprintln!("esto: {flag} requires a value\n{usage}");
         std::process::exit(1);
@@ -102,7 +106,9 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
             .map(|n| Duration::from_secs(n * 60))
             .map_err(|e| e.to_string())
     } else {
-        Err(format!("invalid duration '{s}'; expected e.g. '5s', '100ms', '1m'"))
+        Err(format!(
+            "invalid duration '{s}'; expected e.g. '5s', '100ms', '1m'"
+        ))
     }
 }
 
@@ -126,18 +132,33 @@ fn cmd_watch(raw: &[String]) {
             "--dry-run" => dry_run = true,
             "--quiet" => quiet = true,
             "--on" => {
-                let val = require_value(&mut args_iter, "--on", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+                let val = require_value(
+                    &mut args_iter,
+                    "--on",
+                    "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>",
+                );
                 if val == "git-commit" {
                     triggers.push(esto::watch::WatchTrigger::GitCommit);
-                } else if let Some(path) = val.strip_prefix("inotify:").or_else(|| val.strip_prefix("fs:")) {
-                    triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(path)));
+                } else if let Some(path) = val
+                    .strip_prefix("inotify:")
+                    .or_else(|| val.strip_prefix("fs:"))
+                {
+                    triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(
+                        path,
+                    )));
                 } else {
-                    eprintln!("esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit");
+                    eprintln!(
+                        "esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit"
+                    );
                     std::process::exit(1);
                 }
             }
             "--every" => {
-                let val = require_value(&mut args_iter, "--every", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+                let val = require_value(
+                    &mut args_iter,
+                    "--every",
+                    "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>",
+                );
                 interval = Some(parse_duration(val).unwrap_or_else(|e| {
                     eprintln!("esto watch: {e}");
                     std::process::exit(1);
@@ -172,7 +193,9 @@ fn cmd_types(raw: &[String]) {
                 out_dir = std::path::PathBuf::from(val);
             }
             other => {
-                eprintln!("esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]");
+                eprintln!(
+                    "esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]"
+                );
                 std::process::exit(1);
             }
         }
@@ -219,7 +242,9 @@ fn cmd_run(raw: &[String]) {
         }
     }
     let file = file.unwrap_or_else(|| {
-        eprintln!("esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>");
+        eprintln!(
+            "esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>"
+        );
         std::process::exit(1);
     });
     if let Err(e) = run_file(&file, dry_run, quiet) {
@@ -231,10 +256,15 @@ fn cmd_run(raw: &[String]) {
 fn cmd_reconcile() {
     let cli = Cli::parse();
 
-    if cli.enter.is_none() && cli.exit.is_none() && cli.update.is_none()
-        && !cli.dry_run && !cli.fail_on_change
+    if cli.enter.is_none()
+        && cli.exit.is_none()
+        && cli.update.is_none()
+        && !cli.dry_run
+        && !cli.fail_on_change
     {
-        eprintln!("esto: at least one of --enter, --exit, --update is required (or use --dry-run / --fail-on-change)");
+        eprintln!(
+            "esto: at least one of --enter, --exit, --update is required (or use --dry-run / --fail-on-change)"
+        );
         std::process::exit(1);
     }
 

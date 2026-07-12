@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 optative = { version = "0.1.1", path = "../optative" }
 optative-script = { version = "0.0.1", path = "../optative-script" }
-optative-process-pool = { version = "0.0.3", path = "../optative-process-pool" }
+optative-process-pool = { version = "0.0.4", path = "../optative-process-pool" }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"

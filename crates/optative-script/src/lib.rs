@@ -2,15 +2,15 @@
 //! [tauler](https://github.com/kantord/tauler). Drives the `esto` reconciliation
 //! CLI; expect breaking changes between 0.x releases.
 
+mod engine;
 pub mod jsx;
 pub mod tags;
-mod engine;
 
 // Re-export rquickjs primitives so plugin authors don't need a direct rquickjs dep.
-pub use rquickjs::{Array, Ctx, Error as JsError, FromJs, IntoJs, Object, Value};
 pub use rquickjs::function::{Function, Rest};
+pub use rquickjs::{Array, Ctx, Error as JsError, FromJs, IntoJs, Object, Value};
 
-pub use engine::{run_script, serde_json_simple_array, RunStats};
+pub use engine::{RunStats, run_script, serde_json_simple_array};
 
 /// One JS builtin exported from a synthetic module.
 pub struct EsEntry {

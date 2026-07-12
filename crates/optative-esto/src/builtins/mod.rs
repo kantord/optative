@@ -19,10 +19,22 @@ pub use internal::{
 
 pub fn register_fs_internal(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     use rquickjs::function::Function;
-    ctx.globals().set("__esto_fs_claimFile", Function::new(ctx.clone(), fs::fs_claim_file_fn)?)?;
-    ctx.globals().set("__esto_fs_fileEnumerate", Function::new(ctx.clone(), fs::fs_file_enumerate_fn)?)?;
-    ctx.globals().set("__esto_fs_folderEnumerate", Function::new(ctx.clone(), fs::fs_folder_enumerate_fn)?)?;
-    ctx.globals().set("__esto_fs_scopeSupervise", Function::new(ctx.clone(), fs::fs_scope_supervise_fn)?)?;
+    ctx.globals().set(
+        "__esto_fs_claimFile",
+        Function::new(ctx.clone(), fs::fs_claim_file_fn)?,
+    )?;
+    ctx.globals().set(
+        "__esto_fs_fileEnumerate",
+        Function::new(ctx.clone(), fs::fs_file_enumerate_fn)?,
+    )?;
+    ctx.globals().set(
+        "__esto_fs_folderEnumerate",
+        Function::new(ctx.clone(), fs::fs_folder_enumerate_fn)?,
+    )?;
+    ctx.globals().set(
+        "__esto_fs_scopeSupervise",
+        Function::new(ctx.clone(), fs::fs_scope_supervise_fn)?,
+    )?;
     Ok(())
 }
 

@@ -5,8 +5,8 @@
 
 pub mod builtins;
 pub mod registry;
-pub mod watch;
 pub mod types;
+pub mod watch;
 
 /// How many times a stateful worker may request shutdown before the dispatch is
 /// considered permanently failed. One retry lets a crashed worker respawn once.
@@ -18,23 +18,22 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use optative::{Lifecycle, OptativeSet};
 use optative::reconcile::Reconcile;
+use optative::{Lifecycle, OptativeSet};
 
 pub fn run_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), EstoError> {
     fn setup(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
         builtins::register_internal(ctx)?;
         registry::register_builtins(ctx)
     }
-    let stats = optative_script::run_script(
-        file,
-        registry::ES_BUILTINS,
-        setup,
-        dry_run,
-        quiet,
-    ).map_err(|e| EstoError::WorkerError(e.to_string()))?;
+    let stats = optative_script::run_script(file, registry::ES_BUILTINS, setup, dry_run, quiet)
+        .map_err(|e| EstoError::WorkerError(e.to_string()))?;
 
-    let exit_code = if dry_run { stats.enter + stats.update + stats.exit } else { stats.errors };
+    let exit_code = if dry_run {
+        stats.enter + stats.update + stats.exit
+    } else {
+        stats.errors
+    };
     if exit_code != 0 {
         std::process::exit(exit_code as i32);
     }
@@ -71,7 +70,11 @@ pub struct WorkerPool {
 
 impl WorkerPool {
     pub fn new(cmd: String, stateful: bool) -> Self {
-        Self { cmd, handle: None, stateful }
+        Self {
+            cmd,
+            handle: None,
+            stateful,
+        }
     }
 
     fn spawn(&mut self) -> Result<(), EstoError> {
@@ -90,13 +93,21 @@ impl WorkerPool {
             let reader = std::io::BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
-                    Ok(l) => { if tx.send(l).is_err() { break; } }
+                    Ok(l) => {
+                        if tx.send(l).is_err() {
+                            break;
+                        }
+                    }
                     Err(_) => break,
                 }
             }
         });
 
-        self.handle = Some(WorkerHandle { child, stdin, stdout_rx: rx });
+        self.handle = Some(WorkerHandle {
+            child,
+            stdin,
+            stdout_rx: rx,
+        });
         Ok(())
     }
 
@@ -136,23 +147,30 @@ impl WorkerPool {
         }
     }
 
-    fn dispatch_with_retry(&mut self, task_line: String, retries_left: u8) -> Result<(), EstoError> {
+    fn dispatch_with_retry(
+        &mut self,
+        task_line: String,
+        retries_left: u8,
+    ) -> Result<(), EstoError> {
         let key = task_line.splitn(2, '\t').next().unwrap_or("").to_string();
         let h = self.handle.as_mut().unwrap();
 
-        h.stdin.write_all(format!("{task_line}\n").as_bytes()).map_err(EstoError::Io)?;
+        h.stdin
+            .write_all(format!("{task_line}\n").as_bytes())
+            .map_err(EstoError::Io)?;
         h.stdin.flush().map_err(EstoError::Io)?;
 
         loop {
-            let line = h.stdout_rx.recv().map_err(|_| {
-                EstoError::WorkerChannelClosed
-            })?;
+            let line = h
+                .stdout_rx
+                .recv()
+                .map_err(|_| EstoError::WorkerChannelClosed)?;
 
             let parts: Vec<&str> = line.splitn(3, '\t').collect();
             match parts.as_slice() {
                 ["done", k] if *k == key => return Ok(()),
                 ["error", k, msg] if *k == key => {
-                    return Err(EstoError::WorkerError((*msg).to_string()))
+                    return Err(EstoError::WorkerError((*msg).to_string()));
                 }
                 ["shutdown"] => {
                     if retries_left == 0 {
@@ -185,14 +203,23 @@ pub struct WorkerPools {
 
 impl WorkerPools {
     pub fn shutdown(&mut self) {
-        if let Some(p) = self.enter.as_mut() { p.shutdown(); }
-        if let Some(p) = self.exit.as_mut() { p.shutdown(); }
-        if let Some(p) = self.update.as_mut() { p.shutdown(); }
+        if let Some(p) = self.enter.as_mut() {
+            p.shutdown();
+        }
+        if let Some(p) = self.exit.as_mut() {
+            p.shutdown();
+        }
+        if let Some(p) = self.update.as_mut() {
+            p.shutdown();
+        }
     }
 }
 
 // key kept in state so exit can dispatch with it
-struct HookState { key: String, value: String }
+struct HookState {
+    key: String,
+    value: String,
+}
 
 struct HookItem {
     key: String,
@@ -206,7 +233,9 @@ impl Lifecycle for HookItem {
     type Output = ();
     type Error = EstoError;
 
-    fn key(&self) -> String { self.key.clone() }
+    fn key(&self) -> String {
+        self.key.clone()
+    }
 
     fn enter(self, ctx: &mut WorkerPools, _: &mut ()) -> Result<HookState, EstoError> {
         if !ctx.quiet {
@@ -218,13 +247,24 @@ impl Lifecycle for HookItem {
                 pool.dispatch(format!("{}\t{}", self.key, self.value))?;
             }
         }
-        Ok(HookState { key: self.key, value: self.value })
+        Ok(HookState {
+            key: self.key,
+            value: self.value,
+        })
     }
 
-    fn reconcile_self(self, state: &mut HookState, ctx: &mut WorkerPools, _: &mut ()) -> Result<(), EstoError> {
+    fn reconcile_self(
+        self,
+        state: &mut HookState,
+        ctx: &mut WorkerPools,
+        _: &mut (),
+    ) -> Result<(), EstoError> {
         if state.value != self.value {
             if !ctx.quiet {
-                eprintln!("[update] {} {:?} -> {:?}", self.key, state.value, self.value);
+                eprintln!(
+                    "[update] {} {:?} -> {:?}",
+                    self.key, state.value, self.value
+                );
             }
             ctx.update_count += 1;
             if !ctx.dry_run {
@@ -255,10 +295,18 @@ fn parse_tsv_lines(text: &str) -> Vec<HookItem> {
     let mut items = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         match line.splitn(2, '\t').collect::<Vec<_>>().as_slice() {
-            [key, value] => items.push(HookItem { key: (*key).to_string(), value: (*value).to_string() }),
-            [key] => items.push(HookItem { key: (*key).to_string(), value: String::new() }),
+            [key, value] => items.push(HookItem {
+                key: (*key).to_string(),
+                value: (*value).to_string(),
+            }),
+            [key] => items.push(HookItem {
+                key: (*key).to_string(),
+                value: String::new(),
+            }),
             _ => {}
         }
     }
@@ -306,9 +354,18 @@ pub struct ReconcileConfig {
 
 fn make_pools(config: &ReconcileConfig) -> WorkerPools {
     WorkerPools {
-        enter: config.enter.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
-        exit: config.exit.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
-        update: config.update.as_ref().map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        enter: config
+            .enter
+            .as_ref()
+            .map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        exit: config
+            .exit
+            .as_ref()
+            .map(|c| WorkerPool::new(c.clone(), config.stateful)),
+        update: config
+            .update
+            .as_ref()
+            .map(|c| WorkerPool::new(c.clone(), config.stateful)),
         quiet: config.quiet,
         dry_run: config.dry_run,
         enter_count: 0,
@@ -319,13 +376,26 @@ fn make_pools(config: &ReconcileConfig) -> WorkerPools {
 
 fn seed_from(cmd: &str) -> Result<Vec<(String, HookState)>, EstoError> {
     let from_items = run_command_for_pairs(cmd)?;
-    Ok(from_items.into_iter().map(|item| {
-        let key = item.key.clone();
-        (key.clone(), HookState { key, value: item.value })
-    }).collect())
+    Ok(from_items
+        .into_iter()
+        .map(|item| {
+            let key = item.key.clone();
+            (
+                key.clone(),
+                HookState {
+                    key,
+                    value: item.value,
+                },
+            )
+        })
+        .collect())
 }
 
-fn reconcile_step(set: &mut OptativeSet<HookItem>, config: &ReconcileConfig, pools: &mut WorkerPools) -> Result<(), EstoError> {
+fn reconcile_step(
+    set: &mut OptativeSet<HookItem>,
+    config: &ReconcileConfig,
+    pools: &mut WorkerPools,
+) -> Result<(), EstoError> {
     let to_items = run_command_for_pairs(&config.to)?;
     let errors = set.reconcile(to_items, pools, &mut ());
     for (key, err) in errors {
@@ -387,7 +457,7 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
 
 #[cfg(test)]
 mod tsv_parsing {
-    use super::{parse_tsv_lines};
+    use super::parse_tsv_lines;
 
     #[test]
     fn tsv_key_value_pair() {
@@ -438,9 +508,14 @@ mod reconcile {
 
     fn dry_pools() -> WorkerPools {
         WorkerPools {
-            enter: None, exit: None, update: None,
-            quiet: true, dry_run: true,
-            enter_count: 0, exit_count: 0, update_count: 0,
+            enter: None,
+            exit: None,
+            update: None,
+            quiet: true,
+            dry_run: true,
+            enter_count: 0,
+            exit_count: 0,
+            update_count: 0,
         }
     }
 
@@ -448,7 +523,14 @@ mod reconcile {
     fn reconcile_new_item_increments_enter() {
         let mut set: OptativeSet<HookItem> = OptativeSet::new();
         let mut pools = dry_pools();
-        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v".into() }], &mut pools, &mut ());
+        let errors = set.reconcile(
+            vec![HookItem {
+                key: "k".into(),
+                value: "v".into(),
+            }],
+            &mut pools,
+            &mut (),
+        );
         assert!(errors.is_empty());
         assert_eq!(pools.enter_count, 1);
         assert_eq!(pools.exit_count, 0);
@@ -457,7 +539,13 @@ mod reconcile {
 
     #[test]
     fn reconcile_removed_item_increments_exit() {
-        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v") })];
+        let initial = vec![(
+            String::from("k"),
+            HookState {
+                key: String::from("k"),
+                value: String::from("v"),
+            },
+        )];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
         let errors = set.reconcile(vec![], &mut pools, &mut ());
@@ -469,10 +557,23 @@ mod reconcile {
 
     #[test]
     fn reconcile_changed_value_increments_update() {
-        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v1") })];
+        let initial = vec![(
+            String::from("k"),
+            HookState {
+                key: String::from("k"),
+                value: String::from("v1"),
+            },
+        )];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
-        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v2".into() }], &mut pools, &mut ());
+        let errors = set.reconcile(
+            vec![HookItem {
+                key: "k".into(),
+                value: "v2".into(),
+            }],
+            &mut pools,
+            &mut (),
+        );
         assert!(errors.is_empty());
         assert_eq!(pools.update_count, 1);
         assert_eq!(pools.enter_count, 0);
@@ -481,10 +582,23 @@ mod reconcile {
 
     #[test]
     fn reconcile_unchanged_value_no_update() {
-        let initial = vec![(String::from("k"), HookState { key: String::from("k"), value: String::from("v") })];
+        let initial = vec![(
+            String::from("k"),
+            HookState {
+                key: String::from("k"),
+                value: String::from("v"),
+            },
+        )];
         let mut set: OptativeSet<HookItem> = OptativeSet::with_initial_state(initial);
         let mut pools = dry_pools();
-        let errors = set.reconcile(vec![HookItem { key: "k".into(), value: "v".into() }], &mut pools, &mut ());
+        let errors = set.reconcile(
+            vec![HookItem {
+                key: "k".into(),
+                value: "v".into(),
+            }],
+            &mut pools,
+            &mut (),
+        );
         assert!(errors.is_empty());
         assert_eq!(pools.update_count, 0);
         assert_eq!(pools.enter_count, 0);

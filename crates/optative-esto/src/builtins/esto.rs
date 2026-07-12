@@ -27,23 +27,28 @@ fn js_value_to_string<'js>(val: &Value<'js>) -> String {
 }
 
 pub fn register_exists(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_exists", Function::new(ctx.clone(), |path: String| {
-        Path::new(&path).exists()
-    })?)?;
+    ctx.globals().set(
+        "__esto_exists",
+        Function::new(ctx.clone(), |path: String| Path::new(&path).exists())?,
+    )?;
     Ok(())
 }
 
 pub fn register_read(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_read", Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
-        std::fs::read_to_string(&path).map_err(rquickjs::Error::Io)
-    })?)?;
+    ctx.globals().set(
+        "__esto_read",
+        Function::new(ctx.clone(), |path: String| -> rquickjs::Result<String> {
+            std::fs::read_to_string(&path).map_err(rquickjs::Error::Io)
+        })?,
+    )?;
     Ok(())
 }
 
 pub fn register_hash(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_hash", Function::new(ctx.clone(), |data: String| {
-        super::hex_sha256(&data)
-    })?)?;
+    ctx.globals().set(
+        "__esto_hash",
+        Function::new(ctx.clone(), |data: String| super::hex_sha256(&data))?,
+    )?;
     Ok(())
 }
 
@@ -76,11 +81,16 @@ fn unit_fn<'js>(ctx: Ctx<'js>, def: Object<'js>) -> rquickjs::Result<Object<'js>
 }
 
 pub fn register_unit(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_unit", Function::new(ctx.clone(), unit_fn)?)?;
+    ctx.globals()
+        .set("__esto_unit", Function::new(ctx.clone(), unit_fn)?)?;
     Ok(())
 }
 
-fn prompt_fn<'js>(ctx: Ctx<'js>, strings: Array<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<Value<'js>> {
+fn prompt_fn<'js>(
+    ctx: Ctx<'js>,
+    strings: Array<'js>,
+    rest: Rest<Value<'js>>,
+) -> rquickjs::Result<Value<'js>> {
     let len = strings.len();
     let mut body = strings.get::<String>(0).unwrap_or_default();
     for (i, val) in rest.0.iter().enumerate() {
@@ -95,13 +105,19 @@ fn prompt_fn<'js>(ctx: Ctx<'js>, strings: Array<'js>, rest: Rest<Value<'js>>) ->
 }
 
 pub fn register_prompt(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_prompt", Function::new(ctx.clone(), prompt_fn)?)?;
+    ctx.globals()
+        .set("__esto_prompt", Function::new(ctx.clone(), prompt_fn)?)?;
     Ok(())
 }
 
-fn sh_fn<'js>(ctx: Ctx<'js>, strings: Value<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<String> {
+fn sh_fn<'js>(
+    ctx: Ctx<'js>,
+    strings: Value<'js>,
+    rest: Rest<Value<'js>>,
+) -> rquickjs::Result<String> {
     let strings_obj = strings.as_object().ok_or_else(|| {
-        let err = ctx.eval::<Value, _>(r#"new Error("sh: first argument must be a template object")"#)
+        let err = ctx
+            .eval::<Value, _>(r#"new Error("sh: first argument must be a template object")"#)
             .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
         ctx.throw(err)
     })?;
@@ -128,18 +144,24 @@ fn sh_fn<'js>(ctx: Ctx<'js>, strings: Value<'js>, rest: Rest<Value<'js>>) -> rqu
 }
 
 pub fn register_sh(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_sh", Function::new(ctx.clone(), sh_fn)?)?;
+    ctx.globals()
+        .set("__esto_sh", Function::new(ctx.clone(), sh_fn)?)?;
     Ok(())
 }
 
 pub fn register_ls(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_ls", Function::new(ctx.clone(), |dir: String| -> Vec<String> {
-        std::fs::read_dir(&dir)
-            .map(|rd| rd.filter_map(|e| e.ok())
-                .filter_map(|e| e.file_name().into_string().ok())
-                .collect())
-            .unwrap_or_default()
-    })?)?;
+    ctx.globals().set(
+        "__esto_ls",
+        Function::new(ctx.clone(), |dir: String| -> Vec<String> {
+            std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter_map(|e| e.file_name().into_string().ok())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })?,
+    )?;
     Ok(())
 }
 
@@ -172,14 +194,23 @@ fn json_stringify<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> rquickjs::Result<Stri
     stringify.call((val,))
 }
 
-fn object_assign<'js>(ctx: &Ctx<'js>, target: Object<'js>, source: Object<'js>) -> rquickjs::Result<()> {
+fn object_assign<'js>(
+    ctx: &Ctx<'js>,
+    target: Object<'js>,
+    source: Object<'js>,
+) -> rquickjs::Result<()> {
     let js_object: Object<'js> = ctx.globals().get("Object")?;
     let assign: Function<'js> = js_object.get("assign")?;
     assign.call::<_, Value<'js>>((target, source))?;
     Ok(())
 }
 
-fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<Value<'js>>) -> rquickjs::Result<Value<'js>> {
+fn h_fn<'js>(
+    ctx: Ctx<'js>,
+    type_arg: Value<'js>,
+    props: Value<'js>,
+    rest: Rest<Value<'js>>,
+) -> rquickjs::Result<Value<'js>> {
     let kids = flatten_children(rest.0)?;
 
     // Inspect type markers before moving type_arg
@@ -204,7 +235,11 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
         obj.set(tags::CTX, true)?;
         let (value_val, data_val) = if let Some(p) = props.as_object() {
             let v: Value<'js> = p.get("value")?;
-            let value_out = if v.is_undefined() { Value::new_null(ctx.clone()) } else { v };
+            let value_out = if v.is_undefined() {
+                Value::new_null(ctx.clone())
+            } else {
+                v
+            };
             let d: Value<'js> = p.get("data")?;
             let data_out = if d.is_null() || d.is_undefined() {
                 Value::new_null(ctx.clone())
@@ -251,6 +286,7 @@ fn h_fn<'js>(ctx: Ctx<'js>, type_arg: Value<'js>, props: Value<'js>, rest: Rest<
 }
 
 pub fn register_h(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.globals().set("__esto_h", Function::new(ctx.clone(), h_fn)?)?;
+    ctx.globals()
+        .set("__esto_h", Function::new(ctx.clone(), h_fn)?)?;
     Ok(())
 }
