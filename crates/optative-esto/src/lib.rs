@@ -51,6 +51,10 @@ pub enum EstoError {
     Io(#[from] std::io::Error),
     #[error("watch error: {0}")]
     Watch(String),
+    #[error("worker stdout channel closed unexpectedly")]
+    WorkerChannelClosed,
+    #[error("worker repeatedly requested shutdown")]
+    WorkerShutdownLoop,
 }
 
 struct WorkerHandle {
@@ -141,7 +145,7 @@ impl WorkerPool {
 
         loop {
             let line = h.stdout_rx.recv().map_err(|_| {
-                EstoError::WorkerError("worker stdout closed unexpectedly".into())
+                EstoError::WorkerChannelClosed
             })?;
 
             let parts: Vec<&str> = line.splitn(3, '\t').collect();
@@ -152,9 +156,7 @@ impl WorkerPool {
                 }
                 ["shutdown"] => {
                     if retries_left == 0 {
-                        return Err(EstoError::WorkerError(
-                            "worker repeatedly requested shutdown".into(),
-                        ));
+                        return Err(EstoError::WorkerShutdownLoop);
                     }
                     self.kill_and_clear();
                     self.spawn()?;

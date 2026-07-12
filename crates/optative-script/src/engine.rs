@@ -10,6 +10,10 @@ use sha2::{Digest, Sha256};
 use crate::jsx::transform_source;
 use crate::tags;
 
+/// kind_id=0 is the synthetic bucket: non-JSX targets and leaves with a missing __estoId.
+/// Real unit kinds are assigned ids starting at 1 by NEXT_KIND_ID in builtins/esto.rs.
+const SYNTHETIC_KIND_ID: u32 = 0;
+
 /// SHA-256 prefix length used as a short context identifier in task file names.
 /// 12 hex chars give ~48 bits — low collision risk for typical context set sizes.
 const CONTEXT_HASH_LEN: usize = 12;
@@ -200,19 +204,23 @@ fn reduce<'js>(
         }
         let comp_val: Value = obj.get(tags::COMPONENT)?;
         if comp_val.is_function() {
-            let comp_fn = comp_val.into_function().ok_or_else(|| rquickjs::Error::Io(
-                std::io::Error::new(std::io::ErrorKind::Other, "$component is not callable")
-            ))?;
+            let comp_fn = comp_val.into_function().ok_or_else(|| {
+                let e = ctx.eval::<Value, _>(r#"new TypeError("esto: $component is not callable")"#)
+                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                ctx.throw(e)
+            })?;
             let props: Value = obj.get("props")?;
             let result: Value = comp_fn.call::<(Value,), Value>((props,))?;
             return reduce(ctx, result, context, context_data);
         }
         let kind_val: Value = obj.get(tags::KIND)?;
         if kind_val.is_object() {
-            let kind_obj = kind_val.into_object().ok_or_else(|| rquickjs::Error::Io(
-                std::io::Error::new(std::io::ErrorKind::Other, "$kind is not an object")
-            ))?;
-            let kind_id: u32 = kind_obj.get(tags::ESTO_ID).unwrap_or(0);
+            let kind_obj = kind_val.into_object().ok_or_else(|| {
+                let e = ctx.eval::<Value, _>(r#"new TypeError("esto: $kind is not an object")"#)
+                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                ctx.throw(e)
+            })?;
+            let kind_id: u32 = kind_obj.get(tags::ESTO_ID).unwrap_or(SYNTHETIC_KIND_ID);
             let item: Value = obj.get("item")?;
             return Ok(vec![Leaf { kind_id, kind: kind_obj, item, context, context_data }]);
         }
@@ -387,7 +395,7 @@ fn collect_leaves<'js>(ctx: &Ctx<'js>, path_str: &str, src: &str, is_jsx: bool) 
         let mut leaves = Vec::new();
         for i in 0..desired_arr.len() {
             let item: Value = desired_arr.get(i)?;
-            leaves.push(Leaf { kind_id: 0, kind: target.clone(), item, context: vec![], context_data: vec![] });
+            leaves.push(Leaf { kind_id: SYNTHETIC_KIND_ID, kind: target.clone(), item, context: vec![], context_data: vec![] });
         }
         leaves
     };
@@ -419,8 +427,8 @@ pub fn run_script(
     let (_runtime, context) = build_runtime(entries, base_dir)
         .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
-    let (enter, update, exit, unchanged, errors) = context
-        .with(|ctx| -> rquickjs::Result<(usize, usize, usize, usize, usize)> {
+    let stats = context
+        .with(|ctx| -> rquickjs::Result<RunStats> {
             setup(&ctx)?;
 
             let leaves = collect_leaves(&ctx, &path_str, &src, is_jsx)?;
@@ -442,13 +450,14 @@ pub fn run_script(
                 stats.errors += res.errors;
             }
 
-            Ok((stats.enter, stats.update, stats.exit, stats.unchanged, stats.errors))
+            Ok(stats)
         })
         .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
     if !quiet {
-        eprintln!("reconciled: {enter} enter, {update} update, {exit} exit ({unchanged} unchanged)");
+        eprintln!("reconciled: {} enter, {} update, {} exit ({} unchanged)",
+            stats.enter, stats.update, stats.exit, stats.unchanged);
     }
 
-    Ok(RunStats { enter, update, exit, unchanged, errors })
+    Ok(stats)
 }

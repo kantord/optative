@@ -106,139 +106,129 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
     }
 }
 
-fn main() {
-    tracing_subscriber::fmt::init();
+fn write_or_exit(path: &std::path::Path, contents: impl AsRef<[u8]>, subcommand: &str) {
+    if let Err(e) = std::fs::write(path, contents) {
+        eprintln!("esto {subcommand}: failed to write {}: {e}", path.display());
+        std::process::exit(1);
+    }
+    eprintln!("esto {subcommand}: wrote {}", path.display());
+}
 
-    // Intercept `esto run [--dry-run] [--quiet] <file>` before clap sees the args,
-    // so the existing flat flag interface stays backward-compatible.
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.first().map(|s| s == "watch").unwrap_or(false) {
-        let rest = &raw[1..];
-        let mut dry_run = false;
-        let mut quiet = false;
-        let mut triggers: Vec<esto::watch::WatchTrigger> = Vec::new();
-        let mut interval: Option<Duration> = None;
-        let mut file: Option<String> = None;
-        let mut args_iter = rest.iter();
-        while let Some(arg) = args_iter.next() {
-            match arg.as_str() {
-                "--dry-run" => dry_run = true,
-                "--quiet" => quiet = true,
-                "--on" => {
-                    let val = require_value(&mut args_iter, "--on", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
-                    if val == "git-commit" {
-                        triggers.push(esto::watch::WatchTrigger::GitCommit);
-                    } else if let Some(path) = val.strip_prefix("inotify:").or_else(|| val.strip_prefix("fs:")) {
-                        triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(path)));
-                    } else {
-                        eprintln!("esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit");
-                        std::process::exit(1);
-                    }
-                }
-                "--every" => {
-                    let val = require_value(&mut args_iter, "--every", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
-                    interval = Some(parse_duration(val).unwrap_or_else(|e| {
-                        eprintln!("esto watch: {e}");
-                        std::process::exit(1);
-                    }));
-                }
-                other if !other.starts_with('-') => file = Some(other.to_string()),
-                other => {
-                    eprintln!("esto watch: unknown flag {other}");
+fn cmd_watch(raw: &[String]) {
+    let mut dry_run = false;
+    let mut quiet = false;
+    let mut triggers: Vec<esto::watch::WatchTrigger> = Vec::new();
+    let mut interval: Option<Duration> = None;
+    let mut file: Option<String> = None;
+    let mut args_iter = raw.iter();
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--dry-run" => dry_run = true,
+            "--quiet" => quiet = true,
+            "--on" => {
+                let val = require_value(&mut args_iter, "--on", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+                if val == "git-commit" {
+                    triggers.push(esto::watch::WatchTrigger::GitCommit);
+                } else if let Some(path) = val.strip_prefix("inotify:").or_else(|| val.strip_prefix("fs:")) {
+                    triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(path)));
+                } else {
+                    eprintln!("esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit");
                     std::process::exit(1);
                 }
             }
-        }
-        let file = file.unwrap_or_else(|| {
-            eprintln!("esto watch: missing file argument\nUsage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
-            std::process::exit(1);
-        });
-        if let Err(e) = esto::watch::watch_file(&file, triggers, interval, dry_run, quiet) {
-            eprintln!("esto watch: {e}");
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    if raw.first().map(|s| s == "types" || s == "type-check").unwrap_or(false) {
-        let subcommand = raw[0].clone();
-        let rest = &raw[1..];
-        let mut out_dir = std::path::PathBuf::from(".");
-        let mut args_iter = rest.iter();
-        while let Some(arg) = args_iter.next() {
-            match arg.as_str() {
-                "--out" => {
-                    let val = require_value(&mut args_iter, "--out", "Usage: esto types [--out <dir>]");
-                    out_dir = std::path::PathBuf::from(val);
-                }
-                other => {
-                    eprintln!("esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]");
+            "--every" => {
+                let val = require_value(&mut args_iter, "--every", "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+                interval = Some(parse_duration(val).unwrap_or_else(|e| {
+                    eprintln!("esto watch: {e}");
                     std::process::exit(1);
-                }
+                }));
+            }
+            other if !other.starts_with('-') => file = Some(other.to_string()),
+            other => {
+                eprintln!("esto watch: unknown flag {other}");
+                std::process::exit(1);
             }
         }
-        if let Err(e) = std::fs::create_dir_all(&out_dir) {
-            eprintln!("esto {subcommand}: could not create output directory: {e}");
-            std::process::exit(1);
-        }
-        // Write esto.d.ts
-        let dts_dest = out_dir.join("esto.d.ts");
-        if let Err(e) = std::fs::write(&dts_dest, esto::types::ESTO_DTS) {
-            eprintln!("esto {subcommand}: failed to write {}: {e}", dts_dest.display());
-            std::process::exit(1);
-        }
-        eprintln!("esto {subcommand}: wrote {}", dts_dest.display());
-        // Write tsconfig.esto.json
-        let tsconfig_dest = out_dir.join("tsconfig.esto.json");
-        if let Err(e) = std::fs::write(&tsconfig_dest, esto::types::ESTO_TSCONFIG) {
-            eprintln!("esto {subcommand}: failed to write {}: {e}", tsconfig_dest.display());
-            std::process::exit(1);
-        }
-        eprintln!("esto {subcommand}: wrote {}", tsconfig_dest.display());
-        // For type-check: invoke tsc
-        if subcommand == "type-check" {
-            let status = std::process::Command::new("tsc")
-                .arg("--noEmit")
-                .arg("--project")
-                .arg(&tsconfig_dest)
-                .status()
-                .unwrap_or_else(|e| {
-                    eprintln!("esto type-check: could not run tsc — is TypeScript installed? ({e})");
-                    eprintln!("  Install with: npm install -g typescript");
-                    std::process::exit(127);
-                });
-            std::process::exit(status.code().unwrap_or(1));
-        }
-        return;
     }
+    let file = file.unwrap_or_else(|| {
+        eprintln!("esto watch: missing file argument\nUsage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
+        std::process::exit(1);
+    });
+    if let Err(e) = esto::watch::watch_file(&file, triggers, interval, dry_run, quiet) {
+        eprintln!("esto watch: {e}");
+        std::process::exit(1);
+    }
+}
 
-    if raw.first().map(|s| s == "run").unwrap_or(false) {
-        let rest = &raw[1..];
-        let mut dry_run = false;
-        let mut quiet = false;
-        let mut file: Option<String> = None;
-        for arg in rest {
-            match arg.as_str() {
-                "--dry-run" => dry_run = true,
-                "--quiet" => quiet = true,
-                _ if !arg.starts_with('-') => file = Some(arg.clone()),
-                other => {
-                    eprintln!("esto run: unknown flag {other}");
-                    std::process::exit(1);
-                }
+fn cmd_types(raw: &[String]) {
+    let subcommand = raw[0].clone();
+    let rest = &raw[1..];
+    let mut out_dir = std::path::PathBuf::from(".");
+    let mut args_iter = rest.iter();
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--out" => {
+                let val = require_value(&mut args_iter, "--out", "Usage: esto types [--out <dir>]");
+                out_dir = std::path::PathBuf::from(val);
+            }
+            other => {
+                eprintln!("esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]");
+                std::process::exit(1);
             }
         }
-        let file = file.unwrap_or_else(|| {
-            eprintln!("esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>");
-            std::process::exit(1);
-        });
-        if let Err(e) = run_file(&file, dry_run, quiet) {
-            eprintln!("esto run: {e}");
-            std::process::exit(1);
-        }
-        return;
     }
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("esto {subcommand}: could not create output directory: {e}");
+        std::process::exit(1);
+    }
+    // Write esto.d.ts
+    let dts_dest = out_dir.join("esto.d.ts");
+    write_or_exit(&dts_dest, esto::types::ESTO_DTS, &subcommand);
+    // Write tsconfig.esto.json
+    let tsconfig_dest = out_dir.join("tsconfig.esto.json");
+    write_or_exit(&tsconfig_dest, esto::types::ESTO_TSCONFIG, &subcommand);
+    // For type-check: invoke tsc
+    if subcommand == "type-check" {
+        let status = std::process::Command::new("tsc")
+            .arg("--noEmit")
+            .arg("--project")
+            .arg(&tsconfig_dest)
+            .status()
+            .unwrap_or_else(|e| {
+                eprintln!("esto type-check: could not run tsc — is TypeScript installed? ({e})");
+                eprintln!("  Install with: npm install -g typescript");
+                std::process::exit(127);
+            });
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
 
+fn cmd_run(raw: &[String]) {
+    let mut dry_run = false;
+    let mut quiet = false;
+    let mut file: Option<String> = None;
+    for arg in raw {
+        match arg.as_str() {
+            "--dry-run" => dry_run = true,
+            "--quiet" => quiet = true,
+            _ if !arg.starts_with('-') => file = Some(arg.clone()),
+            other => {
+                eprintln!("esto run: unknown flag {other}");
+                std::process::exit(1);
+            }
+        }
+    }
+    let file = file.unwrap_or_else(|| {
+        eprintln!("esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>");
+        std::process::exit(1);
+    });
+    if let Err(e) = run_file(&file, dry_run, quiet) {
+        eprintln!("esto run: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn cmd_reconcile() {
     let cli = Cli::parse();
 
     if cli.enter.is_none() && cli.exit.is_none() && cli.update.is_none()
@@ -266,5 +256,16 @@ fn main() {
     if let Err(e) = run(config) {
         eprintln!("esto: {e}");
         std::process::exit(1);
+    }
+}
+
+fn main() {
+    tracing_subscriber::fmt::init();
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    match raw.first().map(|s| s.as_str()) {
+        Some("watch") => cmd_watch(&raw[1..]),
+        Some("types") | Some("type-check") => cmd_types(&raw),
+        Some("run") => cmd_run(&raw[1..]),
+        _ => cmd_reconcile(),
     }
 }

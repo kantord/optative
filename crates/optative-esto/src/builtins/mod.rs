@@ -2,6 +2,11 @@ pub mod esto;
 pub mod fs;
 pub mod internal;
 
+pub(super) fn hex_sha256(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(s.as_bytes()))
+}
+
 pub use esto::{
     register_context_marker, register_exists, register_fragment, register_h, register_hash,
     register_ls, register_prompt, register_read, register_sh, register_unit,

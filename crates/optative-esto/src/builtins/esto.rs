@@ -5,7 +5,6 @@ use optative_script::tags;
 
 use rquickjs::function::{Function, Rest};
 use rquickjs::{Array, Ctx, Object, Value};
-use sha2::{Digest, Sha256};
 
 static NEXT_KIND_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -43,8 +42,7 @@ pub fn register_read(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 
 pub fn register_hash(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ctx.globals().set("__esto_hash", Function::new(ctx.clone(), |data: String| {
-        let hash = Sha256::digest(data.as_bytes());
-        format!("{hash:x}")
+        super::hex_sha256(&data)
     })?)?;
     Ok(())
 }

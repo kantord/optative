@@ -5,9 +5,9 @@ const PRUNE_MAX_ABS: usize = 10;
 /// Circuit-breaker: maximum fraction of the managed set that may be pruned in one supervisor pass.
 const PRUNE_MAX_PCT: f64 = 0.5;
 
+use optative_script::tags;
 use rquickjs::function::Function;
 use rquickjs::{Ctx, FromJs, Object, Value};
-use sha2::{Digest, Sha256};
 
 // Extract the render prop: children is either a function or [function].
 fn render_prop<'js>(ctx: &Ctx<'js>, children: &Value<'js>) -> rquickjs::Result<Function<'js>> {
@@ -29,8 +29,7 @@ fn glob_filter(pattern: &str, want_dirs: bool) -> Vec<String> {
 }
 
 fn hash_str(s: &str) -> String {
-    let h = Sha256::digest(s.as_bytes());
-    format!("{h:x}")
+    super::hex_sha256(s)
 }
 
 fn throw_js<'js>(ctx: &Ctx<'js>, msg: &str) -> rquickjs::Error {
@@ -176,23 +175,21 @@ fn extract_claims<'js>(node: Value<'js>) -> rquickjs::Result<ClaimsResult<'js>> 
     if !node.is_object() {
         return Ok(ClaimsResult { claims: vec![], body: vec![] });
     }
-    // node is an Object — inspect without consuming it first
-    let (is_claim, is_fragment, is_component) = {
-        let obj = node.as_object().unwrap();
-        (obj.contains_key("$estoFsClaim")?, obj.contains_key("$fragment")?, obj.contains_key("$component")?)
-    };
+    // node is an Object — inspect without consuming it
+    let obj = node.as_object().unwrap(); // safe: is_object() checked above
+    let is_claim = obj.contains_key(tags::FS_CLAIM)?;
+    let is_fragment = obj.contains_key(tags::FRAG)?;
+    let is_component = obj.contains_key(tags::COMPONENT)?;
     if is_claim {
-        return Ok(ClaimsResult { claims: vec![node.as_object().unwrap().clone()], body: vec![] });
+        return Ok(ClaimsResult { claims: vec![obj.clone()], body: vec![] });
     }
     if is_fragment {
-        let children: Value<'js> = node.as_object().unwrap().get("children")?;
+        let children: Value<'js> = obj.get("children")?;
         return extract_claims(children);
     }
     if is_component {
-        let obj = node.as_object().unwrap();
-        let component: Function<'js> = obj.get("$component")?;
+        let component: Function<'js> = obj.get(tags::COMPONENT)?;
         let props: Value<'js> = obj.get("props")?;
-        let _ = obj;
         let result: Value<'js> = component.call::<_, Value<'js>>((props,))?;
         return extract_claims(result);
     }
@@ -383,7 +380,7 @@ pub(super) fn fs_claim_file_fn<'js>(ctx: Ctx<'js>, props: Object<'js>) -> rquick
     };
 
     let result = Object::new(ctx.clone())?;
-    result.set("$estoFsClaim", true)?;
+    result.set(tags::FS_CLAIM, true)?;
     result.set("matcher", matcher)?;
     result.set("content", content)?;
     result.set("body", body)?;

@@ -15,3 +15,5 @@ pub const ESTO_CONTEXT: &str = "__estoContext";
 pub const ESTO_KIND: &str = "__estoKind";
 /// Auto-assigned numeric identifier for each unique unit kind.
 pub const ESTO_ID: &str = "__estoId";
+/// Marker property set on objects returned by the fs claim-File component.
+pub const FS_CLAIM: &str = "$estoFsClaim";

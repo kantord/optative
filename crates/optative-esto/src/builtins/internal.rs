@@ -45,8 +45,8 @@ pub fn register_git_root(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
         let out = std::process::Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .output()
-            .map_err(|_| rquickjs::Error::Unknown)?;
-        if !out.status.success() { return Err(rquickjs::Error::Unknown); }
+            .map_err(rquickjs::Error::Io)?;
+        if !out.status.success() { return Err(rquickjs::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "git rev-parse --show-toplevel failed"))); }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     })?)?;
     Ok(())
@@ -63,7 +63,7 @@ pub fn register_cwd(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ctx.globals().set("__esto_cwd", Function::new(ctx.clone(), || -> rquickjs::Result<String> {
         std::env::current_dir()
             .map(|p| p.to_str().unwrap_or(".").to_owned())
-            .map_err(|_| rquickjs::Error::Unknown)
+            .map_err(rquickjs::Error::Io)
     })?)?;
     Ok(())
 }
