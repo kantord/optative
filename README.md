@@ -107,6 +107,14 @@ store.reconcile(vec![
 
 -> `PUT /greetings/ada` (message differs), `DELETE /greetings/grace` (no longer in the desired set). optative diffed the two passes and called the right hook for each item.
 
+## CLI: `esto`
+
+`esto` is a shell front-end to optative: express the desired/current state and the
+lifecycle hooks as shell commands instead of a Rust `Lifecycle` impl, and it reconciles
+them. See the **[cookbook](./COOKBOOK.md)** for the usage patterns — enforcing invariants,
+plan/apply, coverage gaps, large-scale migrations, AI agent fan-out, and more — plus
+`esto --help` for the protocol.
+
 ## License
 
 MIT OR Apache-2.0

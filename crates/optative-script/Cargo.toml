@@ -1,0 +1,21 @@
+[package]
+name = "optative-script"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "QuickJS + oxc scripting engine for the optative reconciliation system."
+keywords = ["scripting", "quickjs", "jsx", "reconciler", "optative"]
+categories = ["scripting"]
+
+[dependencies]
+rquickjs = { version = "0.11", features = ["loader"] }
+oxc_allocator = "0.137.0"
+oxc_parser = "0.137.0"
+oxc_semantic = "0.137.0"
+oxc_transformer = "0.137.0"
+oxc_codegen = "0.137.0"
+oxc_span = "0.137.0"
+oxc_resolver = "11.21.3"
+thiserror = "2"
+sha2 = "0.10"
