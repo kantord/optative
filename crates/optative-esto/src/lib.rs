@@ -152,7 +152,7 @@ impl WorkerPool {
         task_line: String,
         retries_left: u8,
     ) -> Result<(), EstoError> {
-        let key = task_line.splitn(2, '\t').next().unwrap_or("").to_string();
+        let key = task_line.split('\t').next().unwrap_or("").to_string();
         let h = self.handle.as_mut().unwrap();
 
         h.stdin
@@ -242,10 +242,10 @@ impl Lifecycle for HookItem {
             eprintln!("[enter] {}", self.key);
         }
         ctx.enter_count += 1;
-        if !ctx.dry_run {
-            if let Some(pool) = ctx.enter.as_mut() {
-                pool.dispatch(format!("{}\t{}", self.key, self.value))?;
-            }
+        if !ctx.dry_run
+            && let Some(pool) = ctx.enter.as_mut()
+        {
+            pool.dispatch(format!("{}\t{}", self.key, self.value))?;
         }
         Ok(HookState {
             key: self.key,
@@ -267,10 +267,10 @@ impl Lifecycle for HookItem {
                 );
             }
             ctx.update_count += 1;
-            if !ctx.dry_run {
-                if let Some(pool) = ctx.update.as_mut() {
-                    pool.dispatch(format!("{}\t{}\t{}", self.key, state.value, self.value))?;
-                }
+            if !ctx.dry_run
+                && let Some(pool) = ctx.update.as_mut()
+            {
+                pool.dispatch(format!("{}\t{}\t{}", self.key, state.value, self.value))?;
             }
             state.value = self.value;
         }
@@ -282,10 +282,10 @@ impl Lifecycle for HookItem {
             eprintln!("[exit] {}", state.key);
         }
         ctx.exit_count += 1;
-        if !ctx.dry_run {
-            if let Some(pool) = ctx.exit.as_mut() {
-                pool.dispatch(format!("{}\t{}", state.key, state.value))?;
-            }
+        if !ctx.dry_run
+            && let Some(pool) = ctx.exit.as_mut()
+        {
+            pool.dispatch(format!("{}\t{}", state.key, state.value))?;
         }
         Ok(())
     }
@@ -441,12 +441,11 @@ pub fn run(config: ReconcileConfig) -> Result<(), EstoError> {
         reconcile_step(&mut set, &config, &mut pools)?;
 
         step += 1;
-        if let Some(n) = config.reingest_every {
-            if step % n == 0 {
-                if let Some(cmd) = &config.from {
-                    set = OptativeSet::with_initial_state(seed_from(cmd)?);
-                }
-            }
+        if let Some(n) = config.reingest_every
+            && step.is_multiple_of(n)
+            && let Some(cmd) = &config.from
+        {
+            set = OptativeSet::with_initial_state(seed_from(cmd)?);
         }
 
         if let Some(rate_limit) = config.rate_limit {

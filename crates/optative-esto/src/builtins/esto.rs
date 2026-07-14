@@ -135,10 +135,10 @@ fn sh_fn<'js>(
         .output()
         .map_err(rquickjs::Error::Io)?;
     if !out.status.success() {
-        return Err(rquickjs::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("sh: subprocess exited with {}", out.status),
-        )));
+        return Err(rquickjs::Error::Io(std::io::Error::other(format!(
+            "sh: subprocess exited with {}",
+            out.status
+        ))));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }

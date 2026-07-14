@@ -149,10 +149,10 @@ fn fs_git_repo_fn<'js>(ctx: Ctx<'js>, props: Object<'js>) -> rquickjs::Result<Va
             if out.status.success() {
                 Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
             } else {
-                Err(rquickjs::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("git rev-parse exited with {}", out.status),
-                )))
+                Err(rquickjs::Error::Io(std::io::Error::other(format!(
+                    "git rev-parse exited with {}",
+                    out.status
+                ))))
             }
         })?;
     let children: Value<'js> = props.get("children")?;
@@ -318,16 +318,16 @@ fn scope_supervise<'js>(
                 bodies: vec![],
             });
             if let Some(ref c) = content {
-                if let Some(ref ex) = entry.content {
-                    if ex != c {
-                        return Err(throw_js(
-                            ctx,
-                            &format!(
-                                "esto/fs: content conflict for {:?} — two claims specify different content",
-                                rel
-                            ),
-                        ));
-                    }
+                if let Some(ref ex) = entry.content
+                    && ex != c
+                {
+                    return Err(throw_js(
+                        ctx,
+                        &format!(
+                            "esto/fs: content conflict for {:?} — two claims specify different content",
+                            rel
+                        ),
+                    ));
                 }
                 entry.content = Some(c.clone());
             }
@@ -471,7 +471,7 @@ pub(super) fn fs_claim_file_fn<'js>(
     let body: Value<'js> = if children_val.is_null() || children_val.is_undefined() {
         Value::new_null(ctx.clone())
     } else if let Some(arr) = children_val.as_array() {
-        if arr.len() == 0 {
+        if arr.is_empty() {
             Value::new_null(ctx.clone())
         } else {
             arr.get::<Function<'js>>(0)?.into()

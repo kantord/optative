@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use clap::Parser;
 use esto::{ReconcileConfig, run, run_file};
-use tracing_subscriber;
 
 #[derive(Parser)]
 #[command(

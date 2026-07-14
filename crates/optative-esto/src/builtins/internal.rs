@@ -56,8 +56,7 @@ pub fn register_git_root(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
                 .output()
                 .map_err(rquickjs::Error::Io)?;
             if !out.status.success() {
-                return Err(rquickjs::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(rquickjs::Error::Io(std::io::Error::other(
                     "git rev-parse --show-toplevel failed",
                 )));
             }
