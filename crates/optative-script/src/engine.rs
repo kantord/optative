@@ -62,7 +62,7 @@ impl Loader for ScriptLoader {
     }
 }
 
-fn is_script_file(name: &str) -> bool {
+pub(crate) fn is_script_file(name: &str) -> bool {
     matches!(
         name.rsplit_once('.').map(|(_, e)| e),
         Some("jsx" | "tsx" | "ts" | "mts")
@@ -447,10 +447,19 @@ fn reconcile_kind<'js>(
     Ok(r)
 }
 
-fn build_runtime(
+/// Builds a fresh `Runtime`/`Context` pair, wiring up the synthetic builtin
+/// modules derived from `entries` alongside a caller-supplied `resolver`/
+/// `loader` pair for everything else (typically `./`/`../` relative
+/// filesystem imports).
+fn build_runtime<R, L>(
     entries: &[crate::EsEntry],
-    base_dir: PathBuf,
-) -> rquickjs::Result<(Runtime, Context)> {
+    resolver: R,
+    loader: L,
+) -> rquickjs::Result<(Runtime, Context)>
+where
+    R: Resolver + 'static,
+    L: Loader + 'static,
+{
     let runtime = Runtime::new()?;
     let mut module_groups: HashMap<&'static str, Vec<&crate::EsEntry>> = HashMap::new();
     for e in entries {
@@ -464,10 +473,7 @@ fn build_runtime(
         .fold(BuiltinLoader::default(), |l, (path, es)| {
             l.with_module(*path, crate::synthetic_module_source_for_entries(es))
         });
-    runtime.set_loader(
-        (builtin_resolver, ScriptResolver { base_dir }),
-        (builtin_loader, ScriptLoader),
-    );
+    runtime.set_loader((builtin_resolver, resolver), (builtin_loader, loader));
     let context = Context::full(&runtime)?;
     Ok((runtime, context))
 }
@@ -530,6 +536,10 @@ fn collect_leaves<'js>(
     Ok(leaves)
 }
 
+/// Runs `path` with the default filesystem resolver/loader: relative imports
+/// resolve against the script's own directory with no path confinement and
+/// no extension-fallback (the import specifier must match the target
+/// filename exactly). This is esto's existing behavior, unchanged.
 pub fn run_script(
     path: &str,
     entries: &[crate::EsEntry],
@@ -544,6 +554,38 @@ pub fn run_script(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
+    run_script_with_loader(
+        path,
+        entries,
+        setup,
+        dry_run,
+        quiet,
+        ScriptResolver { base_dir },
+        ScriptLoader,
+    )
+}
+
+/// Like [`run_script`], but with a caller-supplied resolver/loader pair
+/// instead of the default [`ScriptResolver`]/[`ScriptLoader`]. Use this to
+/// opt into a different import-resolution policy — for example
+/// [`crate::loader::ConfinedFsResolver`]/[`crate::loader::ConfinedFsLoader`]
+/// for path-confined, extension-fallback resolution.
+pub fn run_script_with_loader<R, L>(
+    path: &str,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+    resolver: R,
+    loader: L,
+) -> Result<RunStats, crate::ScriptError>
+where
+    R: Resolver + 'static,
+    L: Loader + 'static,
+{
+    let abs_path = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(crate::ScriptError::Io)?;
     let path_str = abs_path
         .to_str()
         .ok_or_else(|| crate::ScriptError::InvalidPath(abs_path.to_string_lossy().into_owned()))?
@@ -558,8 +600,8 @@ pub fn run_script(
         src_raw
     };
 
-    let (_runtime, context) =
-        build_runtime(entries, base_dir).map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
+    let (_runtime, context) = build_runtime(entries, resolver, loader)
+        .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
     let stats = context
         .with(|ctx| -> rquickjs::Result<RunStats> {

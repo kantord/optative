@@ -4,14 +4,16 @@
 
 mod engine;
 pub mod jsx;
+pub mod loader;
 pub mod runtime;
 pub mod tags;
 
 // Re-export rquickjs primitives so plugin authors don't need a direct rquickjs dep.
 pub use rquickjs::function::{Function, Rest};
+pub use rquickjs::loader::{Loader, Resolver};
 pub use rquickjs::{Array, Ctx, Error as JsError, FromJs, IntoJs, Object, Value};
 
-pub use engine::{RunStats, run_script, serde_json_simple_array};
+pub use engine::{RunStats, run_script, run_script_with_loader, serde_json_simple_array};
 pub use runtime::register_h;
 
 /// One JS builtin exported from a synthetic module.
