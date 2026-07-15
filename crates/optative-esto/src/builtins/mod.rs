@@ -8,14 +8,15 @@ pub(super) fn hex_sha256(s: &str) -> String {
 }
 
 pub use esto::{
-    register_context_marker, register_exists, register_fragment, register_h, register_hash,
-    register_ls, register_prompt, register_read, register_sh, register_unit,
+    register_context_marker, register_exists, register_fragment, register_hash, register_ls,
+    register_prompt, register_read, register_sh, register_unit,
 };
 pub use fs::{register_fs_file, register_fs_folder, register_fs_git_repo};
 pub use internal::{
     register_console, register_console_print, register_cwd, register_git_root, register_glob,
     register_is_dir,
 };
+pub use optative_script::register_h;
 
 pub fn register_fs_internal(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     use rquickjs::function::Function;
