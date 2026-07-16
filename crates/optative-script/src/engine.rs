@@ -179,6 +179,39 @@ struct Leaf<'js> {
     context_data: Vec<String>,
 }
 
+/// Pushes `props.value`/`props.data` onto the ambient context stacks the
+/// same way `h_fn` used to when it had a dedicated Context branch — except
+/// `data` now arrives as a live JS value (not pre-stringified), since
+/// `h_fn`'s generic passthrough case doesn't know a node is a `Context` node.
+/// So the `JSON.stringify` that used to happen in `h_fn` happens here instead.
+fn accumulate_context<'js>(
+    ctx: &Ctx<'js>,
+    props: &Object<'js>,
+    context: &[String],
+    context_data: &[String],
+) -> rquickjs::Result<(Vec<String>, Vec<String>)> {
+    let mut new_ctx = context.to_vec();
+    let v: Value = props.get("value")?;
+    if let Some(s) = v.as_string() {
+        new_ctx.push(s.to_string()?);
+    }
+
+    let mut new_ctx_data = context_data.to_vec();
+    let d: Value = props.get("data")?;
+    if !d.is_null() && !d.is_undefined() {
+        new_ctx_data.push(crate::runtime::json_stringify(ctx, d)?);
+    }
+
+    Ok((new_ctx, new_ctx_data))
+}
+
+/// Walks an already-fully-eagerly-materialized JSX tree (every component in
+/// it has already been called by `h_fn`) collecting `Leaf`s for
+/// reconciliation. There's no `is_fragment`/`is_component` case anymore:
+/// Fragment output is a plain array (handled by the `is_array` branch below)
+/// and every component has already been resolved to its actual output by the
+/// time `h_fn` returns. `Context` and `unit()`-produced kind descriptors are
+/// recognized structurally from a passthrough node's `type` field.
 fn reduce<'js>(
     ctx: &Ctx<'js>,
     node: Value<'js>,
@@ -200,73 +233,31 @@ fn reduce<'js>(
         return Ok(leaves);
     }
     if let Some(obj) = node.as_object() {
-        if obj.get::<_, bool>(tags::FRAG).unwrap_or(false) {
-            let children: Array = obj.get("children")?;
-            let mut leaves = vec![];
-            for i in 0..children.len() {
-                let child: Value = children.get(i)?;
-                leaves.extend(reduce(ctx, child, context.clone(), context_data.clone())?);
+        let type_val: Value = obj.get("type")?;
+        if let Some(type_obj) = type_val.as_object() {
+            if type_obj.contains_key(tags::ESTO_CONTEXT)? {
+                let props: Object = obj.get("props")?;
+                let (new_ctx, new_ctx_data) =
+                    accumulate_context(ctx, &props, &context, &context_data)?;
+                let children: Array = obj.get("children")?;
+                let mut leaves = vec![];
+                for i in 0..children.len() {
+                    let child: Value = children.get(i)?;
+                    leaves.extend(reduce(ctx, child, new_ctx.clone(), new_ctx_data.clone())?);
+                }
+                return Ok(leaves);
             }
-            return Ok(leaves);
-        }
-        if obj.get::<_, bool>(tags::CTX).unwrap_or(false) {
-            let v: Value = obj.get("value")?;
-            let new_ctx = if v.is_null() || v.is_undefined() {
-                context.clone()
-            } else if let Some(s) = v.as_string() {
-                let s = s.to_string()?;
-                let mut c = context.clone();
-                c.push(s);
-                c
-            } else {
-                context.clone()
-            };
-            let data_val: Value = obj.get("data").unwrap_or(Value::new_undefined(ctx.clone()));
-            let mut new_ctx_data = context_data.clone();
-            if !data_val.is_null()
-                && !data_val.is_undefined()
-                && let Some(s) = data_val.as_string()
-                && let Ok(s) = s.to_string()
-            {
-                new_ctx_data.push(s);
+            if type_obj.contains_key(tags::ESTO_KIND)? {
+                let kind_id: u32 = type_obj.get(tags::ESTO_ID).unwrap_or(SYNTHETIC_KIND_ID);
+                let item: Value = obj.get("props")?;
+                return Ok(vec![Leaf {
+                    kind_id,
+                    kind: type_obj.clone(),
+                    item,
+                    context,
+                    context_data,
+                }]);
             }
-            let children: Array = obj.get("children")?;
-            let mut leaves = vec![];
-            for i in 0..children.len() {
-                let child: Value = children.get(i)?;
-                leaves.extend(reduce(ctx, child, new_ctx.clone(), new_ctx_data.clone())?);
-            }
-            return Ok(leaves);
-        }
-        let comp_val: Value = obj.get(tags::COMPONENT)?;
-        if comp_val.is_function() {
-            let comp_fn = comp_val.into_function().ok_or_else(|| {
-                let e = ctx
-                    .eval::<Value, _>(r#"new TypeError("esto: $component is not callable")"#)
-                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
-                ctx.throw(e)
-            })?;
-            let props: Value = obj.get("props")?;
-            let result: Value = comp_fn.call::<(Value,), Value>((props,))?;
-            return reduce(ctx, result, context, context_data);
-        }
-        let kind_val: Value = obj.get(tags::KIND)?;
-        if kind_val.is_object() {
-            let kind_obj = kind_val.into_object().ok_or_else(|| {
-                let e = ctx
-                    .eval::<Value, _>(r#"new TypeError("esto: $kind is not an object")"#)
-                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
-                ctx.throw(e)
-            })?;
-            let kind_id: u32 = kind_obj.get(tags::ESTO_ID).unwrap_or(SYNTHETIC_KIND_ID);
-            let item: Value = obj.get("item")?;
-            return Ok(vec![Leaf {
-                kind_id,
-                kind: kind_obj,
-                item,
-                context,
-                context_data,
-            }]);
         }
     }
     {

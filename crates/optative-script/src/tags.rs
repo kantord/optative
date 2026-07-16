@@ -1,12 +1,3 @@
-/// Marker property set on Fragment objects emitted by `h()`.
-pub const FRAG: &str = "$fragment";
-/// Marker property set on Context objects emitted by `h()`.
-pub const CTX: &str = "$context";
-/// Property name under which a component function is stored by `h()`.
-pub const COMPONENT: &str = "$component";
-/// Property name under which a unit-kind descriptor is stored by `h()`.
-pub const KIND: &str = "$kind";
-
 /// Internal flag set by `__esto_fragment` to mark Fragment singletons.
 pub const ESTO_FRAGMENT: &str = "__estoFragment";
 /// Internal flag set by `__esto_context` to mark Context singletons.
