@@ -1,18 +1,29 @@
 //! The JSX runtime dispatch function: `h(type, props, ...children)`.
 //!
 //! This is what JS code calls after JSX has been lowered to plain function
-//! calls by [`crate::jsx::transform_source`]. It inspects `type` for the
-//! marker properties set by the various "special" JSX targets (Fragment,
-//! Context, unit-kind descriptors, component functions) and normalizes each
-//! into the tagged shape that [`crate::run_script`]'s `reduce()` step expects
-//! (see [`crate::tags`]). Anything else — a plain string/opaque tag — is
-//! passed through as inert `{ type, props, children }` data for the caller
-//! to interpret however it likes.
+//! calls by [`crate::jsx::transform_source`]. It has exactly three cases,
+//! checked in order:
+//!
+//! 1. `type` is a JS function (a component) — it is called **immediately**,
+//!    synchronously, with the merged `{...props, children}` object, and
+//!    whatever it returns is returned directly. There is no deferral: no
+//!    component can read anything "ambient" (there is no `useContext`
+//!    equivalent in this codebase), so calling eagerly here produces
+//!    identical results to calling later during reconciliation.
+//! 2. `type` is the `Fragment` singleton (marked via [`tags::ESTO_FRAGMENT`])
+//!    — the (already [`flatten_children`]-processed) children array is
+//!    returned directly, with no wrapping object at all.
+//! 3. Anything else — a plain string tag, the `Context` marker object, a
+//!    `unit()`-produced kind descriptor, or any other opaque value — is
+//!    passed through as inert `{ type, props, children }` data. `Context`
+//!    and kind descriptors are recognized structurally by
+//!    [`crate::run_script`]'s leaf-collection step from their `type`
+//!    (`type.__estoContext` / `type.__estoKind`), not by `h_fn` itself.
 
 use crate::tags;
 
 use rquickjs::function::{Function, Rest};
-use rquickjs::{Ctx, Object, Value};
+use rquickjs::{Ctx, IntoJs, Object, Value};
 
 fn flatten_children<'js>(values: Vec<Value<'js>>) -> rquickjs::Result<Vec<Value<'js>>> {
     let mut out = Vec::new();
@@ -37,7 +48,10 @@ fn flatten_child<'js>(val: Value<'js>, out: &mut Vec<Value<'js>>) -> rquickjs::R
     Ok(())
 }
 
-fn json_stringify<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> rquickjs::Result<String> {
+/// Serializes `val` via JS `JSON.stringify`. Exposed at `pub(crate)` so
+/// `crate::engine`'s leaf-collection step can serialize `Context`'s `data`
+/// prop the same way `h_fn` used to when it had a dedicated Context branch.
+pub(crate) fn json_stringify<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> rquickjs::Result<String> {
     let json: Object<'js> = ctx.globals().get("JSON")?;
     let stringify: Function<'js> = json.get("stringify")?;
     stringify.call((val,))
@@ -62,79 +76,43 @@ fn h_fn<'js>(
 ) -> rquickjs::Result<Value<'js>> {
     let kids = flatten_children(rest.0)?;
 
-    // Inspect type markers before moving type_arg
-    let (is_fragment, is_context, is_kind) = if let Some(obj) = type_arg.as_object() {
-        let frag = obj.contains_key(tags::ESTO_FRAGMENT)?;
-        let ctx_mark = obj.contains_key(tags::ESTO_CONTEXT)?;
-        let kind = obj.contains_key(tags::ESTO_KIND)?;
-        (frag, ctx_mark, kind)
-    } else {
-        (false, false, false)
-    };
-
-    if is_fragment {
-        let obj = Object::new(ctx.clone())?;
-        obj.set(tags::FRAG, true)?;
-        obj.set("children", kids)?;
-        return Ok(Value::from_object(obj));
-    }
-
-    if is_context {
-        let obj = Object::new(ctx.clone())?;
-        obj.set(tags::CTX, true)?;
-        let (value_val, data_val) = if let Some(p) = props.as_object() {
-            let v: Value<'js> = p.get("value")?;
-            let value_out = if v.is_undefined() {
-                Value::new_null(ctx.clone())
-            } else {
-                v
-            };
-            let d: Value<'js> = p.get("data")?;
-            let data_out = if d.is_null() || d.is_undefined() {
-                Value::new_null(ctx.clone())
-            } else {
-                let s = json_stringify(&ctx, d)?;
-                rquickjs::String::from_str(ctx.clone(), &s)?.into()
-            };
-            (value_out, data_out)
-        } else {
-            (Value::new_null(ctx.clone()), Value::new_null(ctx.clone()))
-        };
-        obj.set("value", value_val)?;
-        obj.set("data", data_val)?;
-        obj.set("children", kids)?;
-        return Ok(Value::from_object(obj));
-    }
-
-    if is_kind {
-        let obj = Object::new(ctx.clone())?;
-        obj.set(tags::KIND, type_arg)?;
-        let item = Object::new(ctx.clone())?;
-        if let Some(p) = props.as_object() {
-            object_assign(&ctx, item.clone(), p.clone())?;
-        }
-        obj.set("item", item)?;
-        return Ok(Value::from_object(obj));
-    }
-
+    // Case 1: a component function — call it immediately (no deferral) and
+    // return whatever it returns, unwrapped.
     if type_arg.is_function() {
-        let obj = Object::new(ctx.clone())?;
-        obj.set(tags::COMPONENT, type_arg)?;
+        let comp_fn = type_arg.into_function().ok_or_else(|| {
+            let e = ctx
+                .eval::<Value, _>(r#"new TypeError("esto: JSX type is not callable")"#)
+                .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+            ctx.throw(e)
+        })?;
         let merged = Object::new(ctx.clone())?;
         if let Some(p) = props.as_object() {
             object_assign(&ctx, merged.clone(), p.clone())?;
         }
         merged.set("children", kids)?;
-        obj.set("props", merged)?;
-        return Ok(Value::from_object(obj));
+        return comp_fn.call::<_, Value<'js>>((merged,));
     }
 
-    // Anything else (a plain string tag, a symbol, an opaque value, ...) is
-    // not one of the special JSX targets above — pass it through as inert
-    // `{ type, props, children }` data for the caller to interpret. Nested
-    // under its own `props` key (rather than spread flat) so that reserved
-    // keys like `type`/`children` on the caller's props object can't collide
-    // with this wrapper's own fields.
+    // Case 2: the Fragment singleton — return the flattened children array
+    // directly, with no wrapping object.
+    let is_fragment = if let Some(obj) = type_arg.as_object() {
+        obj.contains_key(tags::ESTO_FRAGMENT)?
+    } else {
+        false
+    };
+    if is_fragment {
+        return kids.into_js(&ctx);
+    }
+
+    // Case 3: anything else (a plain string tag, the Context marker object,
+    // a unit()-produced kind descriptor, a symbol, an opaque value, ...) is
+    // passed through as inert `{ type, props, children }` data for the
+    // caller to interpret. Nested under its own `props` key (rather than
+    // spread flat) so that reserved keys like `type`/`children` on the
+    // caller's props object can't collide with this wrapper's own fields.
+    // `Context`/kind descriptors are recognized *structurally* from `type`
+    // downstream (see `crate::engine`'s leaf-collection step) rather than
+    // getting a dedicated branch here.
     let out = Object::new(ctx.clone())?;
     out.set("type", type_arg)?;
     let props_out = Object::new(ctx.clone())?;

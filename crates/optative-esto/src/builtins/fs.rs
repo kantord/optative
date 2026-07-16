@@ -179,6 +179,10 @@ struct ClaimsResult<'js> {
     body: Vec<Value<'js>>,
 }
 
+// Fragments now come through as plain arrays (handled by the `is_array`
+// branch below) and every component has already been called by `h_fn` by
+// the time this tree exists — so the only structural marker left to
+// recognize here is a claim-File leaf (`tags::FS_CLAIM`).
 fn extract_claims<'js>(node: Value<'js>) -> rquickjs::Result<ClaimsResult<'js>> {
     if node.is_null() || node.is_undefined() || node.as_bool() == Some(false) {
         return Ok(ClaimsResult {
@@ -199,32 +203,13 @@ fn extract_claims<'js>(node: Value<'js>) -> rquickjs::Result<ClaimsResult<'js>> 
             body: all_body,
         });
     }
-    if !node.is_object() {
-        return Ok(ClaimsResult {
-            claims: vec![],
-            body: vec![],
-        });
-    }
-    // node is an Object — inspect without consuming it
-    let obj = node.as_object().unwrap(); // safe: is_object() checked above
-    let is_claim = obj.contains_key(tags::FS_CLAIM)?;
-    let is_fragment = obj.contains_key(tags::FRAG)?;
-    let is_component = obj.contains_key(tags::COMPONENT)?;
-    if is_claim {
+    if let Some(obj) = node.as_object()
+        && obj.contains_key(tags::FS_CLAIM)?
+    {
         return Ok(ClaimsResult {
             claims: vec![obj.clone()],
             body: vec![],
         });
-    }
-    if is_fragment {
-        let children: Value<'js> = obj.get("children")?;
-        return extract_claims(children);
-    }
-    if is_component {
-        let component: Function<'js> = obj.get(tags::COMPONENT)?;
-        let props: Value<'js> = obj.get("props")?;
-        let result: Value<'js> = component.call::<_, Value<'js>>((props,))?;
-        return extract_claims(result);
     }
     Ok(ClaimsResult {
         claims: vec![],
