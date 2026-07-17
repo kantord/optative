@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/kantord/optative/compare/optative-script-v0.0.3...optative-script-v0.0.4) - 2026-07-17
+
+### Added
+
+- *(optative-script)* export build_runtime ([#30](https://github.com/kantord/optative/pull/30))
+
 ## [0.0.3](https://github.com/kantord/optative/compare/optative-script-v0.0.2...optative-script-v0.0.3) - 2026-07-16
 
 ### Added
