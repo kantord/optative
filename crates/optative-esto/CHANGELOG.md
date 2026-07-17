@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/kantord/optative/compare/esto-v0.0.3...esto-v0.0.4) - 2026-07-17
+
+### Other
+
+- updated the following local packages: optative-script
+
 ## [0.0.3](https://github.com/kantord/optative/compare/esto-v0.0.2...esto-v0.0.3) - 2026-07-16
 
 ### Added
