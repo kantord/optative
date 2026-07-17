@@ -442,7 +442,13 @@ fn reconcile_kind<'js>(
 /// modules derived from `entries` alongside a caller-supplied `resolver`/
 /// `loader` pair for everything else (typically `./`/`../` relative
 /// filesystem imports).
-fn build_runtime<R, L>(
+///
+/// Public so a caller that needs the raw `Runtime`/`Context` for its own
+/// evaluation loop (e.g. a persistent, re-invoked-many-times evaluator, as
+/// opposed to esto's one-shot [`run_script`]/[`run_script_with_loader`]) can
+/// reuse this wiring instead of re-implementing the `EsEntry` grouping and
+/// `BuiltinResolver`/`BuiltinLoader` fold by hand.
+pub fn build_runtime<R, L>(
     entries: &[crate::EsEntry],
     resolver: R,
     loader: L,
