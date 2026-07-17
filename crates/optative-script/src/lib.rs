@@ -13,7 +13,9 @@ pub use rquickjs::function::{Function, Rest};
 pub use rquickjs::loader::{Loader, Resolver};
 pub use rquickjs::{Array, Ctx, Error as JsError, FromJs, IntoJs, Object, Value};
 
-pub use engine::{RunStats, run_script, run_script_with_loader, serde_json_simple_array};
+pub use engine::{
+    RunStats, build_runtime, run_script, run_script_with_loader, serde_json_simple_array,
+};
 pub use runtime::register_h;
 
 /// One JS builtin exported from a synthetic module.
