@@ -46,6 +46,6 @@ pub enum ScriptError {
     Io(#[from] std::io::Error),
     #[error("invalid path: {0}")]
     InvalidPath(String),
-    #[error("runtime error: {0}")]
+    #[error("{0}")]
     Worker(String),
 }

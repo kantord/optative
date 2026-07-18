@@ -247,7 +247,7 @@ fn cmd_run(raw: &[String]) {
         std::process::exit(1);
     });
     if let Err(e) = run_file(&file, dry_run, quiet) {
-        eprintln!("esto run: {e}");
+        eprintln!("esto run: {file}\n\n{e}");
         std::process::exit(1);
     }
 }
