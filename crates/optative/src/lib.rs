@@ -111,7 +111,7 @@ impl<T: Lifecycle> Default for OptativeSet<T> {
     }
 }
 
-impl<T: Lifecycle + 'static> OptativeSet<T>
+impl<T: Lifecycle> OptativeSet<T>
 where
     T::Error: Debug,
 {
@@ -224,7 +224,7 @@ where
     }
 }
 
-impl<T: Lifecycle + 'static> reconcile::Reconcile<T> for OptativeSet<T>
+impl<T: Lifecycle> reconcile::Reconcile<T> for OptativeSet<T>
 where
     T::Error: Debug,
 {
