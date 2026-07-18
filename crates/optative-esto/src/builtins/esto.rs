@@ -135,10 +135,18 @@ fn sh_fn<'js>(
         .output()
         .map_err(rquickjs::Error::Io)?;
     if !out.status.success() {
-        return Err(rquickjs::Error::Io(std::io::Error::other(format!(
-            "sh: subprocess exited with {}",
-            out.status
-        ))));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = stderr.trim();
+        let mut msg = format!("shell command failed ({})\n  $ {cmd}", out.status);
+        if !stderr.is_empty() {
+            msg.push_str("\n  stderr:\n");
+            for line in stderr.lines() {
+                msg.push_str("    ");
+                msg.push_str(line);
+                msg.push('\n');
+            }
+        }
+        return Err(rquickjs::Exception::throw_message(&ctx, msg.trim_end()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
