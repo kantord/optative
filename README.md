@@ -109,11 +109,22 @@ store.reconcile(vec![
 
 ## CLI: `esto`
 
-`esto` is a shell front-end to optative: express the desired/current state and the
-lifecycle hooks as shell commands instead of a Rust `Lifecycle` impl, and it reconciles
-them. See the **[cookbook](./COOKBOOK.md)** for the usage patterns — enforcing invariants,
-plan/apply, coverage gaps, large-scale migrations, AI agent fan-out, and more — plus
-`esto --help` for the protocol.
+`esto` runs declarative `.op.tsx`/`.eso.jsx` scripts instead of a Rust `Lifecycle` impl:
+define a `unit()` (key/value/observe/enter/update/exit) and a JSX tree describing the
+desired set, and `esto run <file>` diffs it against `observe()`'s reported current state,
+calling the right hook for each item — the same reconciliation `OptativeSet` does, just
+scripted. `esto --help` / `esto <subcommand> --help` has the full command reference
+(`run`, `watch`, `types`, `type-check`).
+
+Worked examples:
+- **[`examples/`](./examples)** — minimal, self-contained scripts in this repo.
+- **[kantord/meta.op](https://github.com/kantord/meta.op)** — governance across a whole
+  GitHub account, e.g. `ci/cargo-test-coverage.op.tsx`: every Rust repo should have a CI
+  workflow running `cargo test`.
+- **[kantord/insane-forms](https://github.com/kantord/insane-forms)** —
+  `docs/api.op.tsx` (generate an API doc stub per public export),
+  `docs/doc-coverage.op.tsx` (flag public exports missing a JSDoc comment), and
+  `docs/widget-taxonomy.op.tsx` (enforce a structural invariant across a component set).
 
 ## License
 
