@@ -290,6 +290,55 @@ export default (): unknown => [<Thing name="widget" />]
             "error should surface the real thrown message, got: {stderr}"
         );
     }
+
+    #[test]
+    fn failing_update_does_not_trigger_exit() {
+        // observe() reports "widget" already present with value "old"; the JSX
+        // tree desires "widget" with value "new" — a key match with a differing
+        // value, so this is an update, not an enter. update() throws; exit() would
+        // also throw (with a distinctive marker) if it were ever called. Regression
+        // test for optative#36: OptativeSet::update_existing used to remove the
+        // item from its store and call exit() on any reconcile_self failure — a
+        // failing update must never cascade into a real exit() call.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.tsx"),
+            r#"
+import { h, unit } from 'esto'
+
+const Thing = unit({
+  key: (i: { name: string; v: string }) => i.name,
+  value: (i: { name: string; v: string }) => i.v,
+  observe: () => [{ name: 'widget', v: 'old' }],
+  update: () => { throw new Error('distinctive-update-marker-13') },
+  exit: () => { throw new Error('SHOULD-NOT-BE-CALLED') },
+})
+
+export default (): unknown => [<Thing name="widget" v="new" />]
+"#,
+        )
+        .unwrap();
+
+        let output = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("[update] widget"),
+            "expected an update, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("distinctive-update-marker-13"),
+            "error should surface the real thrown message, got: {stderr}"
+        );
+        assert!(
+            !stderr.contains("[exit] widget") && !stderr.contains("SHOULD-NOT-BE-CALLED"),
+            "a failing update must not trigger exit(), got: {stderr}"
+        );
+    }
 }
 
 mod esto_fs {
