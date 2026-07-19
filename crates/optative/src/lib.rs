@@ -157,6 +157,16 @@ where
         }
     }
 
+    /// On a failed `reconcile_self`, this records the error and leaves the item's
+    /// stored state exactly as it was — mirroring `enter_new`/`exit_removed`'s own
+    /// failure handling. It does NOT remove the item or call `exit` on it: that
+    /// "tear down and recover" policy is a choice for the specific `Lifecycle`
+    /// implementor to make inside its own `reconcile_self`, not something this
+    /// generic diff-and-dispatch loop should impose on every consumer. A caller
+    /// that wants recovery-via-exit (e.g. a process supervisor cleaning up a dead
+    /// child after a failed restart) can call its own cleanup logic directly from
+    /// within `reconcile_self`, ordinary function-call style, and still return
+    /// `Err` here purely for reporting.
     fn update_existing(
         &mut self,
         new_map: &mut HashMap<T::Key, T>,
@@ -173,10 +183,6 @@ where
             let item = new_map.remove(&key).unwrap();
             let state = self.store.get_mut(&key).unwrap();
             if let Err(e) = item.wrap_reconcile(state, ctx, output) {
-                let old_state = self.store.remove(&key).unwrap();
-                if let Err(exit_e) = T::wrap_exit(old_state, ctx, output) {
-                    errors.push((key.clone(), exit_e));
-                }
                 errors.push((key, e));
             }
         }
@@ -616,7 +622,7 @@ mod tests {
         }
 
         #[test]
-        fn reconcile_err_exit_called_entry_removed_error_returned() {
+        fn reconcile_err_records_error_without_removing_or_calling_exit() {
             EXIT_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
             let mut ms: OptativeSet<UpdateFallibleSpec> = OptativeSet::new();
 
@@ -631,6 +637,13 @@ mod tests {
             assert!(e1.is_empty());
             assert!(ms.get(&"z".to_string()).is_some());
 
+            // A failed reconcile_self is reported like any other lifecycle error
+            // (same as a failed enter or exit elsewhere) — it does NOT remove the
+            // item from the store or call exit() on it. That symmetry (enter/
+            // reconcile_self/exit failures all "just record it, state untouched")
+            // is the point of this test: recovery-via-exit is a choice for a
+            // specific Lifecycle impl to make inside its own reconcile_self, not
+            // something OptativeSet imposes on every consumer.
             let errors = ms.reconcile(
                 vec![UpdateFallibleSpec {
                     id: "z".to_string(),
@@ -642,10 +655,15 @@ mod tests {
             assert_eq!(errors.len(), 1);
             assert_eq!(errors[0].0, "z");
             assert_eq!(errors[0].1, UpdateError("update failed for z".to_string()));
-            assert!(ms.get(&"z".to_string()).is_none());
-            assert!(EXIT_CALLED.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(
+                ms.get(&"z".to_string()).is_some(),
+                "a failed update must not remove the item from the store"
+            );
+            assert!(
+                !EXIT_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+                "a failed update must not trigger exit()"
+            );
 
-            EXIT_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
             let e3 = ms.reconcile(
                 vec![UpdateFallibleSpec {
                     id: "z".to_string(),
