@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "esto"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "clap",
  "glob",
@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "optative-process-pool"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "nix",
  "optative",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "optative-script"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "optative",
  "oxc_allocator",
