@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/kantord/optative/compare/optative-v0.1.2...optative-v0.1.3) - 2026-07-19
+
+### Other
+
+- remove deprecated docs ([#41](https://github.com/kantord/optative/pull/41))
+- *(optative)* update failures no longer auto-call exit ([#36](https://github.com/kantord/optative/pull/36))
+- relax static bound ([#35](https://github.com/kantord/optative/pull/35))
+
 ## [0.1.2](https://github.com/kantord/optative/compare/optative-v0.1.1...optative-v0.1.2) - 2026-07-15
 
 ### Added
