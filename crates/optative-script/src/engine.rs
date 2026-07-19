@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use optative::{Lifecycle, OptativeSet, Reconcile};
 use rquickjs::function::Function;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver, Loader, Resolver};
 use rquickjs::promise::MaybePromise;
@@ -173,13 +174,6 @@ fn check_prompt(
     Ok(())
 }
 
-struct DesiredEntry<'js> {
-    item: Value<'js>,
-    value_str: String,
-    context: Vec<String>,
-    context_data: Vec<String>,
-}
-
 struct Leaf<'js> {
     kind_id: u32,
     kind: Object<'js>,
@@ -302,35 +296,147 @@ fn call_and_check<'js>(
     check_prompt(key, context, context_data, resolved)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn call_lifecycle<'js>(
-    ctx: &Ctx<'js>,
-    kind: &Object<'js>,
+/// Per-item state `optative::OptativeSet` remembers between `enter`/`reconcile_self`/
+/// `exit` — the previous item's live JS handle (passed as the "old" argument to
+/// `update`/`exit`) plus its value string (for change detection) and key (`exit` only
+/// receives `State`, not the original `JsLeaf`, so the key has to travel with it).
+struct JsLeafState<'js> {
+    key: String,
+    item: Value<'js>,
+    value_str: String,
+}
+
+/// One JSX-tree leaf, converted into an `optative::Lifecycle` item. `key()`/`enter()`/
+/// `reconcile_self()`/`exit()` dispatch to the JS unit's own functions of the same
+/// name — this is the same dispatch `call_lifecycle` used to do by hand, now expressed
+/// as the trait `optative::OptativeSet::reconcile()` already knows how to drive.
+struct JsLeaf<'js> {
+    key: String,
+    value_str: String,
+    item: Value<'js>,
+    context: Vec<String>,
+    context_data: Vec<String>,
+}
+
+/// Shared, mutable state threaded through every `enter`/`reconcile_self`/`exit` call
+/// in one `reconcile()` pass: the JS `Ctx`/Kind object every dispatch needs, the
+/// dry-run/quiet flags, and running counts `reconcile_kind` reads back afterward
+/// (`optative::Reconcile::reconcile` returns the error list, but not per-category
+/// enter/update/exit/unchanged counts, so those are accumulated here — same role
+/// `WorkerPools` played for the now-removed shell-tier `HookItem`).
+struct ReconcileCtx<'js> {
+    js_ctx: Ctx<'js>,
+    kind: Object<'js>,
+    dry_run: bool,
+    quiet: bool,
+    enter_count: usize,
+    update_count: usize,
+    exit_count: usize,
+    unchanged_count: usize,
+}
+
+/// Calls `rc.kind[method]` (if present and callable) with `args`, unless dry-run.
+/// Missing/non-function hooks are a silent no-op — a unit() doesn't have to define
+/// every lifecycle method.
+fn dispatch_hook<'js>(
+    rc: &ReconcileCtx<'js>,
     method: &str,
     args: Vec<Value<'js>>,
     key: &str,
     context: &[String],
     context_data: &[String],
-    dry_run: bool,
-    errors: &mut usize,
-) {
-    if dry_run {
-        return;
+) -> Result<(), String> {
+    if rc.dry_run {
+        return Ok(());
     }
-    let fn_val: Value = match kind.get(method) {
+    let fn_val: Value = match rc.kind.get(method) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
     if !fn_val.is_function() {
-        return;
+        return Ok(());
     }
     let func = match fn_val.into_function() {
         Some(f) => f,
-        None => return,
+        None => return Ok(()),
     };
-    if let Err(e) = call_and_check(func, args, key, context, context_data) {
-        eprintln!("[error] {key}: {}", describe_js_error(ctx, e));
-        *errors += 1;
+    call_and_check(func, args, key, context, context_data)
+        .map_err(|e| describe_js_error(&rc.js_ctx, e))
+}
+
+impl<'js> Lifecycle for JsLeaf<'js> {
+    type Key = String;
+    type State = JsLeafState<'js>;
+    type Context = ReconcileCtx<'js>;
+    type Output = ();
+    type Error = String;
+
+    fn key(&self) -> String {
+        self.key.clone()
+    }
+
+    fn enter(
+        self,
+        rc: &mut ReconcileCtx<'js>,
+        _output: &mut (),
+    ) -> Result<JsLeafState<'js>, String> {
+        if !rc.quiet {
+            eprintln!("[enter] {}", self.key);
+        }
+        rc.enter_count += 1;
+        dispatch_hook(
+            rc,
+            "enter",
+            vec![self.item.clone()],
+            &self.key,
+            &self.context,
+            &self.context_data,
+        )?;
+        Ok(JsLeafState {
+            key: self.key,
+            item: self.item,
+            value_str: self.value_str,
+        })
+    }
+
+    fn reconcile_self(
+        self,
+        state: &mut JsLeafState<'js>,
+        rc: &mut ReconcileCtx<'js>,
+        _output: &mut (),
+    ) -> Result<(), String> {
+        if self.value_str == state.value_str {
+            rc.unchanged_count += 1;
+            return Ok(());
+        }
+        if !rc.quiet {
+            eprintln!("[update] {}", self.key);
+        }
+        rc.update_count += 1;
+        dispatch_hook(
+            rc,
+            "update",
+            vec![self.item.clone(), state.item.clone()],
+            &self.key,
+            &self.context,
+            &self.context_data,
+        )?;
+        state.item = self.item;
+        state.value_str = self.value_str;
+        Ok(())
+    }
+
+    fn exit(
+        state: JsLeafState<'js>,
+        rc: &mut ReconcileCtx<'js>,
+        _output: &mut (),
+    ) -> Result<(), String> {
+        if !rc.quiet {
+            eprintln!("[exit] {}", state.key);
+        }
+        rc.exit_count += 1;
+        dispatch_hook(rc, "exit", vec![state.item.clone()], &state.key, &[], &[])?;
+        Ok(())
     }
 }
 
@@ -341,14 +447,6 @@ fn reconcile_kind<'js>(
     dry_run: bool,
     quiet: bool,
 ) -> rquickjs::Result<RunStats> {
-    let mut r = RunStats {
-        enter: 0,
-        update: 0,
-        exit: 0,
-        unchanged: 0,
-        errors: 0,
-    };
-
     let observe_fn: Function = kind.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
     let obs_val: Value = await_val(obs_raw)?;
@@ -362,93 +460,57 @@ fn reconcile_kind<'js>(
     let key_fn: Function = kind.get("key")?;
     let value_fn: Function = kind.get("value")?;
 
-    let mut current: HashMap<String, (Value<'js>, String)> = HashMap::new();
+    let mut initial: Vec<(String, JsLeafState<'js>)> = Vec::new();
     for i in 0..obs_arr.len() {
         let item: Value = obs_arr.get(i)?;
         let k: String = key_fn.call::<(Value,), String>((item.clone(),))?;
         let v: String = value_fn.call::<(Value,), String>((item.clone(),))?;
-        current.insert(k, (item, v));
+        initial.push((
+            k.clone(),
+            JsLeafState {
+                key: k,
+                item,
+                value_str: v,
+            },
+        ));
     }
 
-    let mut desired: HashMap<String, DesiredEntry<'js>> = HashMap::new();
+    let mut desired: Vec<JsLeaf<'js>> = Vec::new();
     for leaf in leaves {
         let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
         let v: String = value_fn.call::<(Value,), String>((leaf.item.clone(),))?;
-        desired.insert(
-            k,
-            DesiredEntry {
-                item: leaf.item,
-                value_str: v,
-                context: leaf.context,
-                context_data: leaf.context_data,
-            },
-        );
+        desired.push(JsLeaf {
+            key: k,
+            value_str: v,
+            item: leaf.item,
+            context: leaf.context,
+            context_data: leaf.context_data,
+        });
     }
 
-    for (k, entry) in &desired {
-        match current.get(k) {
-            None => {
-                if !quiet {
-                    eprintln!("[enter] {k}");
-                }
-                r.enter += 1;
-                call_lifecycle(
-                    ctx,
-                    kind,
-                    "enter",
-                    vec![entry.item.clone()],
-                    k,
-                    &entry.context,
-                    &entry.context_data,
-                    dry_run,
-                    &mut r.errors,
-                );
-            }
-            Some((c_item, c_val)) => {
-                if entry.value_str != *c_val {
-                    if !quiet {
-                        eprintln!("[update] {k}");
-                    }
-                    r.update += 1;
-                    call_lifecycle(
-                        ctx,
-                        kind,
-                        "update",
-                        vec![entry.item.clone(), c_item.clone()],
-                        k,
-                        &entry.context,
-                        &entry.context_data,
-                        dry_run,
-                        &mut r.errors,
-                    );
-                } else {
-                    r.unchanged += 1;
-                }
-            }
-        }
+    let mut set: OptativeSet<JsLeaf<'js>> = OptativeSet::with_initial_state(initial);
+    let mut rc = ReconcileCtx {
+        js_ctx: ctx.clone(),
+        kind: kind.clone(),
+        dry_run,
+        quiet,
+        enter_count: 0,
+        update_count: 0,
+        exit_count: 0,
+        unchanged_count: 0,
+    };
+    let errors = set.reconcile(desired, &mut rc, &mut ());
+    for (key, msg) in &errors {
+        eprintln!("[error] {key}: {msg}");
     }
 
-    for (k, (c_item, _)) in &current {
-        if !desired.contains_key(k) {
-            if !quiet {
-                eprintln!("[exit] {k}");
-            }
-            r.exit += 1;
-            call_lifecycle(
-                ctx,
-                kind,
-                "exit",
-                vec![c_item.clone()],
-                k,
-                &[],
-                &[],
-                dry_run,
-                &mut r.errors,
-            );
-        }
-    }
-
-    Ok(r)
+    Ok(RunStats {
+        enter: rc.enter_count,
+        update: rc.update_count,
+        exit: rc.exit_count,
+        unchanged: rc.unchanged_count,
+        errors: errors.len(),
+    })
 }
 
 /// Builds a fresh `Runtime`/`Context` pair, wiring up the synthetic builtin

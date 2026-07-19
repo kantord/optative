@@ -804,6 +804,7 @@ dependencies = [
 name = "optative-script"
 version = "0.0.4"
 dependencies = [
+ "optative",
  "oxc_allocator",
  "oxc_codegen",
  "oxc_parser",
