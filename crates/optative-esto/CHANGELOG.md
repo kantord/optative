@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/kantord/optative/compare/esto-v0.0.5...esto-v0.0.6) - 2026-07-19
+
+### Added
+
+- add --limit flag ([#42](https://github.com/kantord/optative/pull/42))
+
 ## [0.0.5](https://github.com/kantord/optative/compare/esto-v0.0.4...esto-v0.0.5) - 2026-07-19
 
 ### Added

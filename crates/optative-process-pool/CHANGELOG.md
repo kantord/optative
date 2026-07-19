@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.6...optative-process-pool-v0.0.7) - 2026-07-19
+
+### Fixed
+
+- *(process-pool)* killpg on exit so grandchildren aren't orphaned ([#44](https://github.com/kantord/optative/pull/44))
+
 ## [0.0.6](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.5...optative-process-pool-v0.0.6) - 2026-07-19
 
 ### Other
