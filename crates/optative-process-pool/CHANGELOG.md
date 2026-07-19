@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.5...optative-process-pool-v0.0.6) - 2026-07-19
+
+### Other
+
+- updated the following local packages: optative, optative-derive
+
 ## [0.0.5](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.4...optative-process-pool-v0.0.5) - 2026-07-15
 
 ### Other

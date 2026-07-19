@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/kantord/optative/compare/esto-v0.0.4...esto-v0.0.5) - 2026-07-19
+
+### Added
+
+- surface JS error messages properly ([#33](https://github.com/kantord/optative/pull/33))
+
+### Other
+
+- remove legacy CLI ([#40](https://github.com/kantord/optative/pull/40))
+- *(optative-script)* reconcile_kind uses optative::OptativeSet ([#37](https://github.com/kantord/optative/pull/37))
+
 ## [0.0.4](https://github.com/kantord/optative/compare/esto-v0.0.3...esto-v0.0.4) - 2026-07-17
 
 ### Other
