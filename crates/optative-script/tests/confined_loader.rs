@@ -42,6 +42,7 @@ fn run_script_with_loader_uses_the_supplied_confined_resolver() {
         noop_setup,
         true,
         true,
+        None,
         ConfinedFsResolver::new(tmp.clone()),
         ConfinedFsLoader::new(loaded_paths),
     )
@@ -61,7 +62,7 @@ fn default_run_script_rejects_the_same_extensionless_import() {
     ));
     let entry = write_fixture(&tmp);
 
-    let result = run_script(entry.to_str().unwrap(), &[], noop_setup, true, true);
+    let result = run_script(entry.to_str().unwrap(), &[], noop_setup, true, true, None);
     assert!(
         result.is_err(),
         "default resolver has no extension fallback, expected './sibling' to fail to resolve"

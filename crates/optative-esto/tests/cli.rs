@@ -341,6 +341,85 @@ export default (): unknown => [<Thing name="widget" v="new" />]
     }
 }
 
+mod limit {
+    use super::*;
+
+    #[test]
+    fn caps_dispatches_and_reports_the_rest_as_limited() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.tsx"),
+            r#"
+import { h, unit } from 'esto'
+
+const Thing = unit({
+  key: (i: { name: string }) => i.name,
+  value: () => 'v',
+  observe: () => [],
+  enter: () => {},
+})
+
+export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} />)
+"#,
+        )
+        .unwrap();
+
+        let output = esto()
+            .args(["run", "--limit", "1", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let enter_lines = stderr.matches("[enter]").count();
+        assert_eq!(
+            enter_lines, 1,
+            "exactly one item should actually dispatch under --limit 1, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("1 enter") && stderr.contains("2 limited"),
+            "summary should report 1 enter and 2 limited, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("not stable across runs"),
+            "should warn that --limit selection isn't stable across runs, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn without_limit_all_items_dispatch_and_no_warning_appears() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.tsx"),
+            r#"
+import { h, unit } from 'esto'
+
+const Thing = unit({
+  key: (i: { name: string }) => i.name,
+  value: () => 'v',
+  observe: () => [],
+  enter: () => {},
+})
+
+export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} />)
+"#,
+        )
+        .unwrap();
+
+        let output = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr.matches("[enter]").count(), 3);
+        assert!(stderr.contains("3 enter"));
+        assert!(!stderr.contains("limited"));
+        assert!(!stderr.contains("not stable across runs"));
+    }
+}
+
 mod esto_fs {
     use super::*;
 

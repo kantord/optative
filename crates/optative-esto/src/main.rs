@@ -28,6 +28,12 @@ enum Command {
         /// Suppress the [enter]/[update]/[exit] log lines and the summary.
         #[arg(long)]
         quiet: bool,
+        /// Cap total enter+update+exit dispatches at N; the rest are counted as
+        /// "limited", not processed. Which N items get through isn't stable
+        /// across runs — useful for "try this on one item first", not for
+        /// picking a specific item.
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Re-run a script whenever a trigger fires.
     Watch {
@@ -45,6 +51,10 @@ enum Command {
         /// Suppress the [enter]/[update]/[exit] log lines.
         #[arg(long)]
         quiet: bool,
+        /// Cap total enter+update+exit dispatches at N per re-run; see `esto run
+        /// --help` for details.
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Write esto's TypeScript ambient types (esto.d.ts + tsconfig.esto.json).
     Types {
@@ -132,8 +142,9 @@ fn main() {
             file,
             dry_run,
             quiet,
+            limit,
         } => {
-            if let Err(e) = run_file(&file, dry_run, quiet) {
+            if let Err(e) = run_file(&file, dry_run, quiet, limit) {
                 eprintln!("esto run: {file}\n\n{e}");
                 std::process::exit(1);
             }
@@ -144,8 +155,9 @@ fn main() {
             every,
             dry_run,
             quiet,
+            limit,
         } => {
-            if let Err(e) = watch_file(&file, triggers, every, dry_run, quiet) {
+            if let Err(e) = watch_file(&file, triggers, every, dry_run, quiet, limit) {
                 eprintln!("esto watch: {e}");
                 std::process::exit(1);
             }
