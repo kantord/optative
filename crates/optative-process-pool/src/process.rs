@@ -133,6 +133,12 @@ pub(super) fn spawn_process(
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::piped());
 
+    // Each child leads its own process group (pgid == its pid) so exit() can
+    // signal the whole group, reaching grandchildren the child doesn't forward
+    // signals to. Trade-off: terminal-generated signals (Ctrl-C) no longer
+    // reach children; teardown is exclusively exit()-driven.
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -215,11 +221,12 @@ impl Lifecycle for ProcessSource {
         _ctx: &mut (),
         _output: &mut Self::Output,
     ) -> Result<(), Self::Error> {
-        // ESRCH if the child is already gone is fine; the poll loop reaps it.
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(state.child.id() as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        );
+        // The child is its own group leader (spawn sets process_group(0)), so
+        // its pid doubles as the pgid; signaling the group reaches grandchildren
+        // too. Valid until the child is reaped, and we signal before reaping.
+        // ESRCH if the group is already gone is fine; the poll loop reaps it.
+        let pgid = nix::unistd::Pid::from_raw(state.child.id() as i32);
+        let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
 
         let deadline = Instant::now() + SHUTDOWN_GRACE_PERIOD;
         while Instant::now() < deadline {
@@ -230,7 +237,7 @@ impl Lifecycle for ProcessSource {
             }
         }
 
-        let _ = state.child.kill();
+        let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
         let _ = state.child.wait();
         Ok(())
     }
@@ -325,6 +332,26 @@ mod tests {
         }
 
         #[test]
+        fn spawned_child_leads_its_own_process_group() {
+            let (tx, _rx) = mpsc::channel();
+            let mut spec = super::make_source("/bin/sleep");
+            spec.args = vec!["60".to_string()];
+            let mut state = spawn_process(spec, &tx).expect("spawn must succeed");
+
+            let pid = nix::unistd::Pid::from_raw(state.child.id() as i32);
+            let pgid = nix::unistd::getpgid(Some(pid));
+
+            let _ = state.child.kill();
+            let _ = state.child.wait();
+
+            assert_eq!(
+                pgid.expect("getpgid must succeed"),
+                pid,
+                "child must be the leader of its own process group"
+            );
+        }
+
+        #[test]
         fn tilde_bin_is_expanded_to_home_dir() {
             let home = std::env::var("HOME").expect("HOME must be set");
             let (tx, _rx) = mpsc::channel();
@@ -411,6 +438,54 @@ mod tests {
             let start = Instant::now();
             ProcessSource::exit(state, &mut (), &mut tx).expect("exit must succeed");
             assert!(start.elapsed() < Duration::from_secs(2));
+        }
+
+        #[test]
+        fn exit_kills_grandchildren_spawned_by_the_child() {
+            let (mut tx, _rx) = mpsc::channel();
+            let pidfile = tempfile::NamedTempFile::new().expect("tempfile must be created");
+            let path = pidfile.path().to_str().expect("utf-8 path").to_string();
+
+            // The shell backgrounds a grandchild, records its pid, then execs
+            // into a foreground sleep — so nothing forwards signals to the
+            // grandchild.
+            let state = ProcessSource {
+                identity: ProcessIdentity {
+                    bin: "/bin/sh".to_string(),
+                    key: "grandchild".to_string(),
+                },
+                args: vec![
+                    "-c".to_string(),
+                    format!("sleep 60 & echo $! > {path}; exec sleep 60"),
+                ],
+                env: BTreeMap::new(),
+                current_dir: None,
+                props: None,
+            }
+            .enter(&mut (), &mut tx)
+            .expect("enter must succeed");
+
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let grandchild_pid = loop {
+                let contents = std::fs::read_to_string(&path).unwrap_or_default();
+                if let Ok(pid) = contents.trim().parse::<i32>() {
+                    break nix::unistd::Pid::from_raw(pid);
+                }
+                assert!(Instant::now() < deadline, "grandchild pid never written");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+
+            ProcessSource::exit(state, &mut (), &mut tx).expect("exit must succeed");
+
+            // Signal 0 probes existence; ESRCH means the grandchild is gone.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while nix::sys::signal::kill(grandchild_pid, None) != Err(nix::errno::Errno::ESRCH) {
+                assert!(
+                    Instant::now() < deadline,
+                    "grandchild survived exit() as an orphan"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
 
         #[test]
