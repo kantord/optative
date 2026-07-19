@@ -277,6 +277,10 @@ pub struct RunStats {
     pub exit: usize,
     pub unchanged: usize,
     pub errors: usize,
+    /// Items that would have entered/updated/exited but were skipped because
+    /// `--limit` was already reached. Tracked separately from `unchanged` so a
+    /// limited run is never mistaken for a converged one.
+    pub limited: usize,
 }
 
 fn call_and_check<'js>(
@@ -329,10 +333,38 @@ struct ReconcileCtx<'js> {
     kind: Object<'js>,
     dry_run: bool,
     quiet: bool,
+    /// Caps total enter+update+exit dispatches for THIS Kind (`--limit`). Scope
+    /// boundary, not yet solved: a script with multiple `unit()` Kinds gets this
+    /// budget separately per Kind, not shared across the whole run — deliberately
+    /// deferred until something actually needs it.
+    limit: Option<usize>,
+    dispatched: usize,
     enter_count: usize,
     update_count: usize,
     exit_count: usize,
     unchanged_count: usize,
+    limited_count: usize,
+}
+
+impl<'js> ReconcileCtx<'js> {
+    /// True if this item's dispatch should be skipped because `--limit` is
+    /// already spent. Selection isn't based on any deliberate ordering — the
+    /// item stream here comes from a plain HashMap inside `optative`, whose
+    /// iteration order isn't stable across runs (or even across processes,
+    /// given Rust's randomized hash seed). Which N items get processed under
+    /// `--limit N` is arbitrary, not "the first N" in any meaningful sense.
+    fn over_limit(&mut self) -> bool {
+        match self.limit {
+            Some(n) if self.dispatched >= n => {
+                self.limited_count += 1;
+                true
+            }
+            _ => {
+                self.dispatched += 1;
+                false
+            }
+        }
+    }
 }
 
 /// Calls `rc.kind[method]` (if present and callable) with `args`, unless dry-run.
@@ -380,6 +412,13 @@ impl<'js> Lifecycle for JsLeaf<'js> {
         rc: &mut ReconcileCtx<'js>,
         _output: &mut (),
     ) -> Result<JsLeafState<'js>, String> {
+        if rc.over_limit() {
+            return Ok(JsLeafState {
+                key: self.key,
+                item: self.item,
+                value_str: self.value_str,
+            });
+        }
         if !rc.quiet {
             eprintln!("[enter] {}", self.key);
         }
@@ -409,6 +448,9 @@ impl<'js> Lifecycle for JsLeaf<'js> {
             rc.unchanged_count += 1;
             return Ok(());
         }
+        if rc.over_limit() {
+            return Ok(());
+        }
         if !rc.quiet {
             eprintln!("[update] {}", self.key);
         }
@@ -431,6 +473,9 @@ impl<'js> Lifecycle for JsLeaf<'js> {
         rc: &mut ReconcileCtx<'js>,
         _output: &mut (),
     ) -> Result<(), String> {
+        if rc.over_limit() {
+            return Ok(());
+        }
         if !rc.quiet {
             eprintln!("[exit] {}", state.key);
         }
@@ -440,12 +485,14 @@ impl<'js> Lifecycle for JsLeaf<'js> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_kind<'js>(
     ctx: &Ctx<'js>,
     kind: &Object<'js>,
     leaves: Vec<Leaf<'js>>,
     dry_run: bool,
     quiet: bool,
+    limit: Option<usize>,
 ) -> rquickjs::Result<RunStats> {
     let observe_fn: Function = kind.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
@@ -494,10 +541,13 @@ fn reconcile_kind<'js>(
         kind: kind.clone(),
         dry_run,
         quiet,
+        limit,
+        dispatched: 0,
         enter_count: 0,
         update_count: 0,
         exit_count: 0,
         unchanged_count: 0,
+        limited_count: 0,
     };
     let errors = set.reconcile(desired, &mut rc, &mut ());
     for (key, msg) in &errors {
@@ -510,6 +560,7 @@ fn reconcile_kind<'js>(
         exit: rc.exit_count,
         unchanged: rc.unchanged_count,
         errors: errors.len(),
+        limited: rc.limited_count,
     })
 }
 
@@ -612,12 +663,14 @@ fn collect_leaves<'js>(
 /// resolve against the script's own directory with no path confinement and
 /// no extension-fallback (the import specifier must match the target
 /// filename exactly). This is esto's existing behavior, unchanged.
+#[allow(clippy::too_many_arguments)]
 pub fn run_script(
     path: &str,
     entries: &[crate::EsEntry],
     setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
     dry_run: bool,
     quiet: bool,
+    limit: Option<usize>,
 ) -> Result<RunStats, crate::ScriptError> {
     let abs_path = std::path::Path::new(path)
         .canonicalize()
@@ -632,6 +685,7 @@ pub fn run_script(
         setup,
         dry_run,
         quiet,
+        limit,
         ScriptResolver { base_dir },
         ScriptLoader,
     )
@@ -642,12 +696,14 @@ pub fn run_script(
 /// opt into a different import-resolution policy — for example
 /// [`crate::loader::ConfinedFsResolver`]/[`crate::loader::ConfinedFsLoader`]
 /// for path-confined, extension-fallback resolution.
+#[allow(clippy::too_many_arguments)]
 pub fn run_script_with_loader<R, L>(
     path: &str,
     entries: &[crate::EsEntry],
     setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
     dry_run: bool,
     quiet: bool,
+    limit: Option<usize>,
     resolver: R,
     loader: L,
 ) -> Result<RunStats, crate::ScriptError>
@@ -655,6 +711,14 @@ where
     R: Resolver + 'static,
     L: Loader + 'static,
 {
+    if limit.is_some() && !quiet {
+        eprintln!(
+            "esto run: --limit is set — which items get selected is not stable across runs \
+             (item order comes from an unordered internal HashMap); re-running may pick a \
+             different subset."
+        );
+    }
+
     let abs_path = std::path::Path::new(path)
         .canonicalize()
         .map_err(crate::ScriptError::Io)?;
@@ -696,15 +760,17 @@ where
                     exit: 0,
                     unchanged: 0,
                     errors: 0,
+                    limited: 0,
                 };
 
                 for (_, (kind_obj, kind_leaves)) in by_kind {
-                    let res = reconcile_kind(&ctx, &kind_obj, kind_leaves, dry_run, quiet)?;
+                    let res = reconcile_kind(&ctx, &kind_obj, kind_leaves, dry_run, quiet, limit)?;
                     stats.enter += res.enter;
                     stats.update += res.update;
                     stats.exit += res.exit;
                     stats.unchanged += res.unchanged;
                     stats.errors += res.errors;
+                    stats.limited += res.limited;
                 }
 
                 Ok(stats)
@@ -717,8 +783,13 @@ where
         .map_err(crate::ScriptError::Worker)?;
 
     if !quiet {
+        let limited_note = if stats.limited > 0 {
+            format!(", {} limited", stats.limited)
+        } else {
+            String::new()
+        };
         eprintln!(
-            "reconciled: {} enter, {} update, {} exit ({} unchanged)",
+            "reconciled: {} enter, {} update, {} exit ({} unchanged{limited_note})",
             stats.enter, stats.update, stats.exit, stats.unchanged
         );
     }

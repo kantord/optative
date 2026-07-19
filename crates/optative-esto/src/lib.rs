@@ -8,13 +8,19 @@ pub mod registry;
 pub mod types;
 pub mod watch;
 
-pub fn run_file(file: &str, dry_run: bool, quiet: bool) -> Result<(), EstoError> {
+pub fn run_file(
+    file: &str,
+    dry_run: bool,
+    quiet: bool,
+    limit: Option<usize>,
+) -> Result<(), EstoError> {
     fn setup(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
         builtins::register_internal(ctx)?;
         registry::register_builtins(ctx)
     }
-    let stats = optative_script::run_script(file, registry::ES_BUILTINS, setup, dry_run, quiet)
-        .map_err(|e| EstoError::Run(e.to_string()))?;
+    let stats =
+        optative_script::run_script(file, registry::ES_BUILTINS, setup, dry_run, quiet, limit)
+            .map_err(|e| EstoError::Run(e.to_string()))?;
 
     let exit_code = if dry_run {
         stats.enter + stats.update + stats.exit

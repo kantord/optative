@@ -10,12 +10,14 @@ pub enum WatchTrigger {
     GitCommit,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn watch_file(
     file: &str,
     triggers: Vec<WatchTrigger>,
     interval: Option<Duration>,
     dry_run: bool,
     quiet: bool,
+    limit: Option<usize>,
 ) -> Result<(), crate::EstoError> {
     let (tx, rx) = mpsc::channel::<()>();
 
@@ -52,7 +54,7 @@ pub fn watch_file(
     }
 
     // Initial run
-    let _ = crate::run_file(file, dry_run, quiet);
+    let _ = crate::run_file(file, dry_run, quiet, limit);
 
     loop {
         let fired = if let Some(dur) = interval {
@@ -75,7 +77,7 @@ pub fn watch_file(
             if !quiet {
                 eprintln!("[watch] re-reconciling");
             }
-            let _ = crate::run_file(file, dry_run, quiet);
+            let _ = crate::run_file(file, dry_run, quiet, limit);
         }
     }
 
