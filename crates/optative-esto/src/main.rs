@@ -1,94 +1,73 @@
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::Parser;
-use esto::{ReconcileConfig, run, run_file};
+use clap::{Parser, Subcommand};
+use esto::run_file;
+use esto::watch::{WatchTrigger, watch_file};
 
 #[derive(Parser)]
 #[command(
     name = "esto",
-    about = "Continuously reconcile a desired set against current state, running hook scripts on changes.",
-    long_about = "esto loops forever: it runs --to to get what should exist, runs --from to get what does \
-exist, then calls your worker scripts for items that appeared (--enter), disappeared (--exit), or changed \
-(--update). At least one worker is required.\n\n\
-I/O format — --from and --to scripts emit one line per item:\n  \
-  key<TAB>value\n\
-The value is opaque — a hash, a JSON blob, a version string, anything single-line. esto never parses it; \
-workers receive it verbatim. Change detection is simple string equality: --update only fires when the \
-value differs between --from and --to.\n\n\
-Worker protocol (default — simple mode):\n  \
-Workers are invoked once per item: cmd key [value [old_value new_value]]\n  \
-Exit 0 = success; nonzero = error. No stdin/stdout protocol required.\n\n\
-Worker protocol (--stateful mode):\n  \
-Workers are long-lived processes. esto writes one line per task on stdin:\n  \
-  enter/exit:  key<TAB>value\n  \
-  update:      key<TAB>old_value<TAB>new_value\n\
-Workers must respond on stdout: done<TAB>key  |  error<TAB>key<TAB>msg  |  shutdown"
+    about = "Run declarative .op.tsx/.eso.jsx reconciler scripts."
 )]
 struct Cli {
-    /// Shell command emitting current world state as TSV: one "key<TAB>value" line per item.
-    /// Optional: omit to start with an empty state (everything in --to will trigger --enter).
-    /// In --once mode this seeds the initial state. In loop mode, used only for --reingest-every.
-    #[arg(long)]
-    from: Option<String>,
-
-    /// Shell command emitting desired state as TSV: one "key<TAB>value" line per item.
-    /// Runs every loop iteration — can be a script, not just 'cat file.tsv'.
-    #[arg(long)]
-    to: String,
-
-    /// Worker invoked for each new item. Simple mode (default): cmd key value.
-    /// Stateful mode (--stateful): long-lived process receiving key<TAB>value on stdin.
-    #[arg(long)]
-    enter: Option<String>,
-
-    /// Worker invoked for each removed item. Simple mode: cmd key value.
-    #[arg(long)]
-    exit: Option<String>,
-
-    /// Worker invoked for each changed item. Simple mode: cmd key old_value new_value.
-    #[arg(long)]
-    update: Option<String>,
-
-    /// Minimum pause between loop iterations (e.g. 5s, 100ms, 1m).
-    #[arg(long, value_parser = parse_duration)]
-    rate_limit: Option<Duration>,
-
-    /// Re-read --from every N iterations to sync internal state with actual world state.
-    #[arg(long)]
-    reingest_every: Option<u64>,
-
-    /// Run exactly one reconcile cycle then exit (CI/script mode).
-    /// Prints a summary line: "reconciled: N enter, N update, N exit (N unchanged)".
-    #[arg(long)]
-    once: bool,
-
-    /// Use long-lived worker processes with stdin/stdout protocol instead of per-item invocation.
-    /// Workers receive tasks on stdin and must reply done<TAB>key / error<TAB>key<TAB>msg / shutdown.
-    #[arg(long)]
-    stateful: bool,
-
-    /// Suppress per-event log lines ([enter]/[exit]/[update]) and the --once summary.
-    #[arg(long)]
-    quiet: bool,
-
-    /// Show what would happen without dispatching any workers.
-    #[arg(long)]
-    dry_run: bool,
-
-    /// Exit 1 if any delta (enter/update/exit) fired. For CI: assert system is already converged.
-    #[arg(long)]
-    fail_on_change: bool,
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn require_value<'a>(
-    iter: &mut impl Iterator<Item = &'a String>,
-    flag: &str,
-    usage: &str,
-) -> &'a String {
-    iter.next().unwrap_or_else(|| {
-        eprintln!("esto: {flag} requires a value\n{usage}");
-        std::process::exit(1);
-    })
+#[derive(Subcommand)]
+enum Command {
+    /// Run a reconciler script once: diff observed vs. desired state, call
+    /// enter/update/exit for the delta.
+    Run {
+        /// Path to the .op.tsx/.op.jsx/.eso.jsx script.
+        file: String,
+        /// Compute the diff and print it without calling enter/update/exit.
+        #[arg(long)]
+        dry_run: bool,
+        /// Suppress the [enter]/[update]/[exit] log lines and the summary.
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Re-run a script whenever a trigger fires.
+    Watch {
+        /// Path to the .op.tsx/.op.jsx/.eso.jsx script.
+        file: String,
+        /// Trigger to re-run on: git-commit, inotify:<path>, or fs:<path>. Repeatable.
+        #[arg(long = "on", value_parser = parse_trigger)]
+        triggers: Vec<WatchTrigger>,
+        /// Also re-run on a fixed interval (e.g. 5s, 100ms, 1m), independent of triggers.
+        #[arg(long, value_parser = parse_duration)]
+        every: Option<Duration>,
+        /// Compute the diff and print it without calling enter/update/exit.
+        #[arg(long)]
+        dry_run: bool,
+        /// Suppress the [enter]/[update]/[exit] log lines.
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Write esto's TypeScript ambient types (esto.d.ts + tsconfig.esto.json).
+    Types {
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+    },
+    /// Like `types`, but also runs `tsc --noEmit` against the generated tsconfig.
+    TypeCheck {
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+    },
+}
+
+fn parse_trigger(s: &str) -> Result<WatchTrigger, String> {
+    if s == "git-commit" {
+        Ok(WatchTrigger::GitCommit)
+    } else if let Some(path) = s.strip_prefix("inotify:").or_else(|| s.strip_prefix("fs:")) {
+        Ok(WatchTrigger::FsPath(PathBuf::from(path)))
+    } else {
+        Err(format!(
+            "unknown trigger '{s}'; use inotify:<path>, fs:<path>, or git-commit"
+        ))
+    }
 }
 
 fn parse_duration(s: &str) -> Result<Duration, String> {
@@ -111,106 +90,25 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
     }
 }
 
-fn write_or_exit(path: &std::path::Path, contents: impl AsRef<[u8]>, subcommand: &str) {
+fn write_or_exit(path: &Path, contents: impl AsRef<[u8]>) {
     if let Err(e) = std::fs::write(path, contents) {
-        eprintln!("esto {subcommand}: failed to write {}: {e}", path.display());
+        eprintln!("esto types: failed to write {}: {e}", path.display());
         std::process::exit(1);
     }
-    eprintln!("esto {subcommand}: wrote {}", path.display());
+    eprintln!("esto types: wrote {}", path.display());
 }
 
-fn cmd_watch(raw: &[String]) {
-    let mut dry_run = false;
-    let mut quiet = false;
-    let mut triggers: Vec<esto::watch::WatchTrigger> = Vec::new();
-    let mut interval: Option<Duration> = None;
-    let mut file: Option<String> = None;
-    let mut args_iter = raw.iter();
-    while let Some(arg) = args_iter.next() {
-        match arg.as_str() {
-            "--dry-run" => dry_run = true,
-            "--quiet" => quiet = true,
-            "--on" => {
-                let val = require_value(
-                    &mut args_iter,
-                    "--on",
-                    "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>",
-                );
-                if val == "git-commit" {
-                    triggers.push(esto::watch::WatchTrigger::GitCommit);
-                } else if let Some(path) = val
-                    .strip_prefix("inotify:")
-                    .or_else(|| val.strip_prefix("fs:"))
-                {
-                    triggers.push(esto::watch::WatchTrigger::FsPath(std::path::PathBuf::from(
-                        path,
-                    )));
-                } else {
-                    eprintln!(
-                        "esto watch: unknown trigger '{val}'; use inotify:<path>, fs:<path>, or git-commit"
-                    );
-                    std::process::exit(1);
-                }
-            }
-            "--every" => {
-                let val = require_value(
-                    &mut args_iter,
-                    "--every",
-                    "Usage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>",
-                );
-                interval = Some(parse_duration(val).unwrap_or_else(|e| {
-                    eprintln!("esto watch: {e}");
-                    std::process::exit(1);
-                }));
-            }
-            other if !other.starts_with('-') => file = Some(other.to_string()),
-            other => {
-                eprintln!("esto watch: unknown flag {other}");
-                std::process::exit(1);
-            }
-        }
-    }
-    let file = file.unwrap_or_else(|| {
-        eprintln!("esto watch: missing file argument\nUsage: esto watch [--on <trigger>...] [--every <dur>] [--dry-run] [--quiet] <file>");
-        std::process::exit(1);
-    });
-    if let Err(e) = esto::watch::watch_file(&file, triggers, interval, dry_run, quiet) {
-        eprintln!("esto watch: {e}");
+fn cmd_types(out: &Path, also_check: bool) {
+    if let Err(e) = std::fs::create_dir_all(out) {
+        eprintln!("esto types: could not create output directory: {e}");
         std::process::exit(1);
     }
-}
+    let dts_dest = out.join("esto.d.ts");
+    write_or_exit(&dts_dest, esto::types::ESTO_DTS);
+    let tsconfig_dest = out.join("tsconfig.esto.json");
+    write_or_exit(&tsconfig_dest, esto::types::ESTO_TSCONFIG);
 
-fn cmd_types(raw: &[String]) {
-    let subcommand = raw[0].clone();
-    let rest = &raw[1..];
-    let mut out_dir = std::path::PathBuf::from(".");
-    let mut args_iter = rest.iter();
-    while let Some(arg) = args_iter.next() {
-        match arg.as_str() {
-            "--out" => {
-                let val = require_value(&mut args_iter, "--out", "Usage: esto types [--out <dir>]");
-                out_dir = std::path::PathBuf::from(val);
-            }
-            other => {
-                eprintln!(
-                    "esto {subcommand}: unknown argument {other}\nUsage: esto {subcommand} [--out <dir>]"
-                );
-                std::process::exit(1);
-            }
-        }
-    }
-    if let Err(e) = std::fs::create_dir_all(&out_dir) {
-        eprintln!("esto {subcommand}: could not create output directory: {e}");
-        std::process::exit(1);
-    }
-    // Write esto.d.ts
-    let dts_dest = out_dir.join("esto.d.ts");
-    write_or_exit(&dts_dest, esto::types::ESTO_DTS, &subcommand);
-    // Write tsconfig.esto.json
-    let tsconfig_dest = out_dir.join("tsconfig.esto.json");
-    write_or_exit(&tsconfig_dest, esto::types::ESTO_TSCONFIG, &subcommand);
-    // For type-check: invoke tsc
-    if subcommand == "type-check" {
+    if also_check {
         let status = std::process::Command::new("tsc")
             .arg("--noEmit")
             .arg("--project")
@@ -225,76 +123,34 @@ fn cmd_types(raw: &[String]) {
     }
 }
 
-fn cmd_run(raw: &[String]) {
-    let mut dry_run = false;
-    let mut quiet = false;
-    let mut file: Option<String> = None;
-    for arg in raw {
-        match arg.as_str() {
-            "--dry-run" => dry_run = true,
-            "--quiet" => quiet = true,
-            _ if !arg.starts_with('-') => file = Some(arg.clone()),
-            other => {
-                eprintln!("esto run: unknown flag {other}");
+fn main() {
+    tracing_subscriber::fmt::init();
+    let cli = Cli::parse();
+
+    match cli.command {
+        Command::Run {
+            file,
+            dry_run,
+            quiet,
+        } => {
+            if let Err(e) = run_file(&file, dry_run, quiet) {
+                eprintln!("esto run: {file}\n\n{e}");
                 std::process::exit(1);
             }
         }
-    }
-    let file = file.unwrap_or_else(|| {
-        eprintln!(
-            "esto run: missing file argument\nUsage: esto run [--dry-run] [--quiet] <file.mjs>"
-        );
-        std::process::exit(1);
-    });
-    if let Err(e) = run_file(&file, dry_run, quiet) {
-        eprintln!("esto run: {file}\n\n{e}");
-        std::process::exit(1);
-    }
-}
-
-fn cmd_reconcile() {
-    let cli = Cli::parse();
-
-    if cli.enter.is_none()
-        && cli.exit.is_none()
-        && cli.update.is_none()
-        && !cli.dry_run
-        && !cli.fail_on_change
-    {
-        eprintln!(
-            "esto: at least one of --enter, --exit, --update is required (or use --dry-run / --fail-on-change)"
-        );
-        std::process::exit(1);
-    }
-
-    let config = ReconcileConfig {
-        from: cli.from,
-        to: cli.to,
-        enter: cli.enter,
-        exit: cli.exit,
-        update: cli.update,
-        rate_limit: cli.rate_limit,
-        reingest_every: cli.reingest_every,
-        once: cli.once,
-        stateful: cli.stateful,
-        quiet: cli.quiet,
-        dry_run: cli.dry_run,
-        fail_on_change: cli.fail_on_change,
-    };
-
-    if let Err(e) = run(config) {
-        eprintln!("esto: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn main() {
-    tracing_subscriber::fmt::init();
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    match raw.first().map(|s| s.as_str()) {
-        Some("watch") => cmd_watch(&raw[1..]),
-        Some("types") | Some("type-check") => cmd_types(&raw),
-        Some("run") => cmd_run(&raw[1..]),
-        _ => cmd_reconcile(),
+        Command::Watch {
+            file,
+            triggers,
+            every,
+            dry_run,
+            quiet,
+        } => {
+            if let Err(e) = watch_file(&file, triggers, every, dry_run, quiet) {
+                eprintln!("esto watch: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Types { out } => cmd_types(&out, false),
+        Command::TypeCheck { out } => cmd_types(&out, true),
     }
 }

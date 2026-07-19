@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
+#[derive(Clone)]
 pub enum WatchTrigger {
     FsPath(PathBuf),
     GitCommit,
