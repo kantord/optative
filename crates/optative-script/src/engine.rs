@@ -711,14 +711,6 @@ where
     R: Resolver + 'static,
     L: Loader + 'static,
 {
-    if limit.is_some() && !quiet {
-        eprintln!(
-            "esto run: --limit is set — which items get selected is not stable across runs \
-             (item order comes from an unordered internal HashMap); re-running may pick a \
-             different subset."
-        );
-    }
-
     let abs_path = std::path::Path::new(path)
         .canonicalize()
         .map_err(crate::ScriptError::Io)?;
@@ -736,6 +728,113 @@ where
         src_raw
     };
 
+    eval_and_reconcile(
+        &path_str, &src, is_jsx, entries, setup, dry_run, quiet, limit, resolver, loader,
+    )
+}
+
+/// Like [`run_script_with_loader`], but takes a pre-supplied `source` instead
+/// of reading and transforming `path` from disk — `source` is used verbatim,
+/// with no further transformation. `path` is still canonicalized and used for
+/// `base_dir` (relative-import resolution), diagnostics, and as the
+/// evaluated module's registered name.
+///
+/// `is_jsx` selects the default export's expected shape (a JSX-tree-
+/// returning function vs. a `desired()`-returning object) — the same
+/// distinction [`run_script_with_loader`] infers from `path`'s extension for
+/// `.jsx`/`.tsx` files, made explicit here since `path`'s extension may not
+/// reflect `source`'s actual shape (e.g. a source lowered from a non-JS
+/// input format).
+#[allow(clippy::too_many_arguments)]
+pub fn run_script_with_source_and_loader<R, L>(
+    path: &str,
+    source: &str,
+    is_jsx: bool,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+    limit: Option<usize>,
+    resolver: R,
+    loader: L,
+) -> Result<RunStats, crate::ScriptError>
+where
+    R: Resolver + 'static,
+    L: Loader + 'static,
+{
+    let abs_path = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(crate::ScriptError::Io)?;
+    let path_str = abs_path
+        .to_str()
+        .ok_or_else(|| crate::ScriptError::InvalidPath(abs_path.to_string_lossy().into_owned()))?
+        .to_string();
+
+    eval_and_reconcile(
+        &path_str, source, is_jsx, entries, setup, dry_run, quiet, limit, resolver, loader,
+    )
+}
+
+/// Like [`run_script`], but takes a pre-supplied `source` — see
+/// [`run_script_with_source_and_loader`] for details. Uses the default
+/// filesystem resolver/loader, same as [`run_script`].
+#[allow(clippy::too_many_arguments)]
+pub fn run_script_with_source(
+    path: &str,
+    source: &str,
+    is_jsx: bool,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+    limit: Option<usize>,
+) -> Result<RunStats, crate::ScriptError> {
+    let abs_path = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(crate::ScriptError::Io)?;
+    let base_dir = abs_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    run_script_with_source_and_loader(
+        path,
+        source,
+        is_jsx,
+        entries,
+        setup,
+        dry_run,
+        quiet,
+        limit,
+        ScriptResolver { base_dir },
+        ScriptLoader,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_and_reconcile<R, L>(
+    path_str: &str,
+    src: &str,
+    is_jsx: bool,
+    entries: &[crate::EsEntry],
+    setup: fn(&Ctx<'_>) -> rquickjs::Result<()>,
+    dry_run: bool,
+    quiet: bool,
+    limit: Option<usize>,
+    resolver: R,
+    loader: L,
+) -> Result<RunStats, crate::ScriptError>
+where
+    R: Resolver + 'static,
+    L: Loader + 'static,
+{
+    if limit.is_some() && !quiet {
+        eprintln!(
+            "esto run: --limit is set — which items get selected is not stable across runs \
+             (item order comes from an unordered internal HashMap); re-running may pick a \
+             different subset."
+        );
+    }
+
     let (_runtime, context) = build_runtime(entries, resolver, loader)
         .map_err(|e| crate::ScriptError::Worker(e.to_string()))?;
 
@@ -744,7 +843,7 @@ where
             let result: rquickjs::Result<RunStats> = (|| {
                 setup(&ctx)?;
 
-                let leaves = collect_leaves(&ctx, &path_str, &src, is_jsx)?;
+                let leaves = collect_leaves(&ctx, path_str, src, is_jsx)?;
 
                 let mut by_kind: HashMap<u32, (Object, Vec<Leaf>)> = HashMap::new();
                 for leaf in leaves {

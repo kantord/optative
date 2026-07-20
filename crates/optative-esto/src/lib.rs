@@ -1,7 +1,9 @@
-//! **Experimental.** Reconciliation CLI for `.op.tsx`/`.eso.jsx` scripts, built on
-//! [optative-script](https://github.com/kantord/optative)'s scripting engine, which
-//! itself reconciles via [optative](https://github.com/kantord/optative)'s
-//! `Lifecycle`/`OptativeSet`. Expect breaking changes between 0.x releases.
+//! **Experimental.** Reconciliation CLI for `.op.tsx`/`.op.jsx`/`.op.mdx`/`.eso.jsx`
+//! scripts, built on [optative-script](https://github.com/kantord/optative)'s
+//! scripting engine (via the [optative-script-mdx](https://github.com/kantord/optative)
+//! wrapper, which adds `.op.mdx` support), which itself reconciles via
+//! [optative](https://github.com/kantord/optative)'s `Lifecycle`/`OptativeSet`.
+//! Expect breaking changes between 0.x releases.
 
 pub mod builtins;
 pub mod registry;
@@ -19,7 +21,7 @@ pub fn run_file(
         registry::register_builtins(ctx)
     }
     let stats =
-        optative_script::run_script(file, registry::ES_BUILTINS, setup, dry_run, quiet, limit)
+        optative_script_mdx::run_script(file, registry::ES_BUILTINS, setup, dry_run, quiet, limit)
             .map_err(|e| EstoError::Run(e.to_string()))?;
 
     let exit_code = if dry_run {

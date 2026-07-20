@@ -181,6 +181,48 @@ mod esto_run {
             "tasks/bar.md should be created"
         );
     }
+
+    #[test]
+    fn grounding_op_mdx_creates_task_and_context_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let status = esto()
+            .args(["run", &example("grounding.op.mdx")])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+
+        assert!(status.success(), "esto run grounding.op.mdx should exit 0");
+        assert!(
+            dir.path().join("tasks/foo.md").exists(),
+            "tasks/foo.md should be created"
+        );
+        assert!(
+            dir.path().join("tasks/bar.md").exists(),
+            "tasks/bar.md should be created"
+        );
+
+        // Both leaves share the same two heading-scoped context sections
+        // (# Repo: demo, ## Package: core) → 2 unique content-addressed files.
+        let ctx_count = fs::read_dir(dir.path().join(".esto/context"))
+            .unwrap()
+            .count();
+        assert_eq!(
+            ctx_count, 2,
+            "context files should be deduped: 2 sections → 2 files"
+        );
+        let combined: String = fs::read_dir(dir.path().join(".esto/context"))
+            .unwrap()
+            .map(|e| fs::read_to_string(e.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            combined.contains("# Repo: demo"),
+            "context should include the heading line itself, got: {combined}"
+        );
+        assert!(combined.contains("A tiny library."));
+        assert!(combined.contains("## Package: core"));
+        assert!(combined.contains("Published, zero-dep."));
+    }
 }
 
 mod error_messages {
@@ -288,6 +330,33 @@ export default (): unknown => [<Thing name="widget" />]
         assert!(
             stderr.contains("distinctive-enter-marker-7"),
             "error should surface the real thrown message, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn mdx_inline_jsx_in_prose_reports_a_positioned_error() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.mdx"),
+            "import { h, Context } from 'esto'\n\nHello <Foo /> world.\n",
+        )
+        .unwrap();
+
+        let output = esto()
+            .args(["run", "script.op.mdx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("not supported yet"),
+            "error should explain inline JSX isn't supported yet, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("script.op.mdx:3:"),
+            "error should point at the real .op.mdx file and line, got: {stderr}"
         );
     }
 

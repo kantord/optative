@@ -1,0 +1,22 @@
+import { h, Context, unit, prompt } from 'esto'
+
+export interface DocProps {
+  name: string
+}
+
+export const Doc = unit({
+  key:     (i: DocProps) => i.name,
+  value:   (_i: DocProps) => 'needs-doc',
+  observe: (): DocProps[] => [],
+  enter:   (i: DocProps) => prompt`Document ${i.name}. Be concise: what it does, params, returns.`,
+})
+
+# Repo: demo
+
+A tiny library.
+
+## Package: core
+
+Published, zero-dep.
+
+{(['foo', 'bar'] as string[]).map((n: string) => <Doc name={n} />)}
