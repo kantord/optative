@@ -8,7 +8,7 @@ use esto::watch::{WatchTrigger, watch_file};
 #[derive(Parser)]
 #[command(
     name = "esto",
-    about = "Run declarative .op.tsx/.eso.jsx reconciler scripts."
+    about = "Run declarative .op.tsx/.op.jsx/.op.mdx/.eso.jsx reconciler scripts."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -20,7 +20,7 @@ enum Command {
     /// Run a reconciler script once: diff observed vs. desired state, call
     /// enter/update/exit for the delta.
     Run {
-        /// Path to the .op.tsx/.op.jsx/.eso.jsx script.
+        /// Path to the .op.tsx/.op.jsx/.op.mdx/.eso.jsx script.
         file: String,
         /// Compute the diff and print it without calling enter/update/exit.
         #[arg(long)]
@@ -37,7 +37,7 @@ enum Command {
     },
     /// Re-run a script whenever a trigger fires.
     Watch {
-        /// Path to the .op.tsx/.op.jsx/.eso.jsx script.
+        /// Path to the .op.tsx/.op.jsx/.op.mdx/.eso.jsx script.
         file: String,
         /// Trigger to re-run on: git-commit, inotify:<path>, or fs:<path>. Repeatable.
         #[arg(long = "on", value_parser = parse_trigger)]

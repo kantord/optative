@@ -1,0 +1,15 @@
+[package]
+name = "optative-script-mdx"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wraps optative-script to add .op.mdx (markdown + JSX) script support, dispatching by extension."
+keywords = ["scripting", "markdown", "mdx", "reconciler", "optative"]
+categories = ["development-tools"]
+
+[dependencies]
+optative-script = { version = "0.0.6", path = "../optative-script" }
+markdown = "1.0.0"
+thiserror = "2"
+serde_json = "1"

@@ -14,7 +14,8 @@ pub use rquickjs::loader::{Loader, Resolver};
 pub use rquickjs::{Array, Ctx, Error as JsError, FromJs, IntoJs, Object, Value};
 
 pub use engine::{
-    RunStats, build_runtime, run_script, run_script_with_loader, serde_json_simple_array,
+    RunStats, build_runtime, run_script, run_script_with_loader, run_script_with_source,
+    run_script_with_source_and_loader, serde_json_simple_array,
 };
 pub use runtime::register_h;
 
