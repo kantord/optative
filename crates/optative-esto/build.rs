@@ -67,21 +67,36 @@ declare module "esto" {{
     children?: unknown;
   }}) => JSX.Element;
 
+  // Opaque descriptor returned by optativeSet()/optativeJsonSet() — chooses which
+  // storage backend tracks a unit()'s state between reconciles.
+  type Reconciler<T> = object;
+
+  // In-memory backend: state is re-derived from observe() every run. This is the
+  // right choice whenever there's external ground truth to re-observe (files on
+  // disk, running processes, ...).
+  export function optativeSet<T>(opts: {{ observe: () => T[] }}): Reconciler<T>;
+
+  // Jsonl-file-persisted backend: state is loaded from (and written back to)
+  // `file` across separate esto invocations, with no observe() needed — for
+  // state that has no ground truth to re-derive (e.g. "is this dispatched task
+  // still in flight").
+  export function optativeJsonSet<T>(opts: {{ file: string }}): Reconciler<T>;
+
   // Unit definition passed to unit().
   // T is unconstrained so plain `interface Foo {{ ... }}` types are accepted
   // (TS interfaces lack an implicit index signature and would fail Record<string,unknown>).
   interface UnitDef<T> {{
     /** Stable identity key for an item — used to detect enter/exit. */
-    key?: (item: T) => string;
+    key: (item: T) => string;
     /** Opaque change-detection value — update fires when this differs. */
-    value?: (item: T) => string;
-    /** Returns the current observed set of items. */
-    observe?: () => T[];
+    value: (item: T) => string;
+    /** Which storage backend tracks this unit's state between runs. */
+    reconciler: Reconciler<T>;
     /** Called when a new item appears. May return a prompt`` or sh`` call. */
     enter?: (item: T) => void;
     /** Called when an item's value changes. */
     update?: (item: T) => void;
-    /** Called when an item disappears from the observed set. */
+    /** Called when an item disappears from the tracked set. */
     exit?: (item: T) => void;
   }}
 

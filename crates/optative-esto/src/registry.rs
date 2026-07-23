@@ -49,6 +49,18 @@ pub const ES_BUILTINS: &[EsEntry] = &[
     },
     EsEntry {
         module_path: "esto",
+        export_name: "optativeSet",
+        global_name: "__esto_optative_set",
+        register: builtins::register_optative_set,
+    },
+    EsEntry {
+        module_path: "esto",
+        export_name: "optativeJsonSet",
+        global_name: "__esto_optative_json_set",
+        register: builtins::register_optative_json_set,
+    },
+    EsEntry {
+        module_path: "esto",
         export_name: "sh",
         global_name: "__esto_sh",
         register: builtins::register_sh,

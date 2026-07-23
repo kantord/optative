@@ -10,7 +10,7 @@
  *   esto run examples/mirror.eso.jsx
  */
 
-import { h, unit, sh, exists, read, ls, hash } from 'esto'
+import { h, unit, sh, exists, read, ls, hash, optativeSet } from 'esto'
 
 const sig = (s) => hash(s).slice(0, 8)
 const write = (i) => sh`mkdir -p out && printf 'sig=%s\ncontent=%s\n' ${i.sig} ${i.content} > out/${i.name}.txt`
@@ -19,12 +19,14 @@ const write = (i) => sh`mkdir -p out && printf 'sig=%s\ncontent=%s\n' ${i.sig} $
 const File = unit({
   key:   (i) => i.name,
   value: (i) => i.sig,
-  observe: () => exists('out')
-    ? ls('out').filter(f => f.endsWith('.txt')).map(f => {
-        const m = read(`out/${f}`).match(/^sig=(.*)$/m)
-        return { name: f.slice(0, -4), sig: m ? m[1] : '' }
-      })
-    : [],
+  reconciler: optativeSet({
+    observe: () => exists('out')
+      ? ls('out').filter(f => f.endsWith('.txt')).map(f => {
+          const m = read(`out/${f}`).match(/^sig=(.*)$/m)
+          return { name: f.slice(0, -4), sig: m ? m[1] : '' }
+        })
+      : [],
+  }),
   enter:  (i) => write(i),
   update: (i) => write(i),
   exit:   (i) => sh`rm -f out/${i.name}.txt`,

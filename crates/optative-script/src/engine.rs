@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use optative::{Lifecycle, OptativeSet, Reconcile};
+use optative::{Lifecycle, OptativeJsonSet, OptativeSet, Reconcile};
 use rquickjs::function::Function;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver, Loader, Resolver};
 use rquickjs::promise::MaybePromise;
@@ -14,6 +14,45 @@ use rquickjs::{Array, CaughtError, Context, Ctx, FromJs, Module, Object, Runtime
 /// while `ctx` is still in scope — the exception state doesn't survive past it.
 fn describe_js_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
     CaughtError::from_error(ctx, err).to_string()
+}
+
+/// First non-control-character Unicode code point (space, `U+0020`) — chars
+/// below this need a `\uXXXX` escape in a JS string literal.
+const ASCII_CONTROL_CHAR_LIMIT: u32 = 0x20;
+
+/// Renders `s` as a JS double-quoted string literal. Used instead of Rust's
+/// `{:?}` (`Debug`) escaping in `throw_type_error`, whose messages can embed
+/// script-supplied paths or OS `io::Error` text: `Debug` escapes control
+/// characters as `\u{7f}`-style braced hex, invalid JS syntax that would fail
+/// `ctx.eval` and lose the real error message.
+fn js_string_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < ASCII_CONTROL_CHAR_LIMIT => {
+                out.push_str(&format!("\\u{:04x}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Throws a JS `TypeError(msg)` and returns the resulting `rquickjs::Error` so
+/// call sites can `return Err(throw_type_error(...))` inline.
+fn throw_type_error<'js>(ctx: &Ctx<'js>, msg: &str) -> rquickjs::Error {
+    let src = format!("new TypeError({})", js_string_literal(msg));
+    let err = ctx
+        .eval::<Value, _>(src)
+        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+    ctx.throw(err)
 }
 use sha2::{Digest, Sha256};
 
@@ -322,6 +361,23 @@ struct JsLeaf<'js> {
     context_data: Vec<String>,
 }
 
+/// Per-item state for `optativeJsonSet`-backed units, persisted to a jsonl file
+/// across separate `esto` runs. Unlike `JsLeafState`, it can't hold a live
+/// `rquickjs::Value` (no JS heap survives between runs) — the item is kept as
+/// JSON text and reconstructed via `JSON.parse` when a hook needs the "old"
+/// value (`update`'s second argument, `exit`'s argument).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct JsonLeafState {
+    key: String,
+    item_json: String,
+    value_str: String,
+}
+
+/// `JsLeaf` wrapped for the `optativeJsonSet` backend (see `JsonLeafState`) — a
+/// newtype rather than a generic param because a type can only implement
+/// `Lifecycle` once, and `JsLeaf` already implements it for `optativeSet`.
+struct JsLeafJson<'js>(JsLeaf<'js>);
+
 /// Shared, mutable state threaded through every `enter`/`reconcile_self`/`exit` call
 /// in one `reconcile()` pass: the JS `Ctx`/Kind object every dispatch needs, the
 /// dry-run/quiet flags, and running counts `reconcile_kind` reads back afterward
@@ -396,6 +452,40 @@ fn dispatch_hook<'js>(
         .map_err(|e| describe_js_error(&rc.js_ctx, e))
 }
 
+/// The part of enter/update/exit shared by every `Lifecycle` impl in this file,
+/// once the caller has already decided (via `rc.over_limit()`) that the hook
+/// should actually fire: log `[method] key` (unless quiet), bump the matching
+/// counter, and dispatch. `method` is always one of "enter"/"update"/"exit".
+fn log_count_and_dispatch<'js>(
+    rc: &mut ReconcileCtx<'js>,
+    method: &str,
+    key: &str,
+    args: Vec<Value<'js>>,
+    context: &[String],
+    context_data: &[String],
+) -> Result<(), String> {
+    if !rc.quiet {
+        eprintln!("[{method}] {key}");
+    }
+    match method {
+        "enter" => rc.enter_count += 1,
+        "update" => rc.update_count += 1,
+        "exit" => rc.exit_count += 1,
+        _ => {}
+    }
+    dispatch_hook(rc, method, args, key, context, context_data)
+}
+
+impl<'js> JsLeaf<'js> {
+    fn into_state(self) -> JsLeafState<'js> {
+        JsLeafState {
+            key: self.key,
+            item: self.item,
+            value_str: self.value_str,
+        }
+    }
+}
+
 impl<'js> Lifecycle for JsLeaf<'js> {
     type Key = String;
     type State = JsLeafState<'js>;
@@ -413,29 +503,17 @@ impl<'js> Lifecycle for JsLeaf<'js> {
         _output: &mut (),
     ) -> Result<JsLeafState<'js>, String> {
         if rc.over_limit() {
-            return Ok(JsLeafState {
-                key: self.key,
-                item: self.item,
-                value_str: self.value_str,
-            });
+            return Ok(self.into_state());
         }
-        if !rc.quiet {
-            eprintln!("[enter] {}", self.key);
-        }
-        rc.enter_count += 1;
-        dispatch_hook(
+        log_count_and_dispatch(
             rc,
             "enter",
-            vec![self.item.clone()],
             &self.key,
+            vec![self.item.clone()],
             &self.context,
             &self.context_data,
         )?;
-        Ok(JsLeafState {
-            key: self.key,
-            item: self.item,
-            value_str: self.value_str,
-        })
+        Ok(self.into_state())
     }
 
     fn reconcile_self(
@@ -451,15 +529,11 @@ impl<'js> Lifecycle for JsLeaf<'js> {
         if rc.over_limit() {
             return Ok(());
         }
-        if !rc.quiet {
-            eprintln!("[update] {}", self.key);
-        }
-        rc.update_count += 1;
-        dispatch_hook(
+        log_count_and_dispatch(
             rc,
             "update",
-            vec![self.item.clone(), state.item.clone()],
             &self.key,
+            vec![self.item.clone(), state.item.clone()],
             &self.context,
             &self.context_data,
         )?;
@@ -476,36 +550,216 @@ impl<'js> Lifecycle for JsLeaf<'js> {
         if rc.over_limit() {
             return Ok(());
         }
-        if !rc.quiet {
-            eprintln!("[exit] {}", state.key);
-        }
-        rc.exit_count += 1;
-        dispatch_hook(rc, "exit", vec![state.item.clone()], &state.key, &[], &[])?;
+        log_count_and_dispatch(rc, "exit", &state.key, vec![state.item.clone()], &[], &[])?;
         Ok(())
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn reconcile_kind<'js>(
+impl<'js> JsLeafJson<'js> {
+    fn into_state(self, rc: &ReconcileCtx<'js>) -> Result<JsonLeafState, String> {
+        let item_json = crate::runtime::json_stringify(&rc.js_ctx, self.0.item)
+            .map_err(|e| describe_js_error(&rc.js_ctx, e))?;
+        Ok(JsonLeafState {
+            key: self.0.key,
+            item_json,
+            value_str: self.0.value_str,
+        })
+    }
+}
+
+/// Same enter/reconcile_self/exit dispatch as `Lifecycle for JsLeaf`, except the
+/// "old" item handed to `update`/`exit` is reconstructed via `JSON.parse` from
+/// `JsonLeafState::item_json` rather than carried as a live `Value` — see
+/// `JsonLeafState`.
+impl<'js> Lifecycle for JsLeafJson<'js> {
+    type Key = String;
+    type State = JsonLeafState;
+    type Context = ReconcileCtx<'js>;
+    type Output = ();
+    type Error = String;
+
+    fn key(&self) -> String {
+        self.0.key.clone()
+    }
+
+    fn enter(self, rc: &mut ReconcileCtx<'js>, _output: &mut ()) -> Result<JsonLeafState, String> {
+        if rc.over_limit() {
+            return self.into_state(rc);
+        }
+        log_count_and_dispatch(
+            rc,
+            "enter",
+            &self.0.key,
+            vec![self.0.item.clone()],
+            &self.0.context,
+            &self.0.context_data,
+        )?;
+        self.into_state(rc)
+    }
+
+    fn reconcile_self(
+        self,
+        state: &mut JsonLeafState,
+        rc: &mut ReconcileCtx<'js>,
+        _output: &mut (),
+    ) -> Result<(), String> {
+        if self.0.value_str == state.value_str {
+            rc.unchanged_count += 1;
+            return Ok(());
+        }
+        if rc.over_limit() {
+            return Ok(());
+        }
+        let old_item = crate::runtime::json_parse(&rc.js_ctx, &state.item_json)
+            .map_err(|e| describe_js_error(&rc.js_ctx, e))?;
+        log_count_and_dispatch(
+            rc,
+            "update",
+            &self.0.key,
+            vec![self.0.item.clone(), old_item],
+            &self.0.context,
+            &self.0.context_data,
+        )?;
+        state.item_json = crate::runtime::json_stringify(&rc.js_ctx, self.0.item)
+            .map_err(|e| describe_js_error(&rc.js_ctx, e))?;
+        state.value_str = self.0.value_str;
+        Ok(())
+    }
+
+    fn exit(
+        state: JsonLeafState,
+        rc: &mut ReconcileCtx<'js>,
+        _output: &mut (),
+    ) -> Result<(), String> {
+        if rc.over_limit() {
+            return Ok(());
+        }
+        let old_item = crate::runtime::json_parse(&rc.js_ctx, &state.item_json)
+            .map_err(|e| describe_js_error(&rc.js_ctx, e))?;
+        log_count_and_dispatch(rc, "exit", &state.key, vec![old_item], &[], &[])?;
+        Ok(())
+    }
+}
+
+fn new_reconcile_ctx<'js>(
     ctx: &Ctx<'js>,
     kind: &Object<'js>,
-    leaves: Vec<Leaf<'js>>,
     dry_run: bool,
     quiet: bool,
     limit: Option<usize>,
+) -> ReconcileCtx<'js> {
+    ReconcileCtx {
+        js_ctx: ctx.clone(),
+        kind: kind.clone(),
+        dry_run,
+        quiet,
+        limit,
+        dispatched: 0,
+        enter_count: 0,
+        update_count: 0,
+        exit_count: 0,
+        unchanged_count: 0,
+        limited_count: 0,
+    }
+}
+
+fn run_stats_from(
+    rc: &ReconcileCtx,
+    errors: &optative::ReconcileErrors<String, String>,
+) -> RunStats {
+    for (key, msg) in errors {
+        eprintln!("[error] {key}: {msg}");
+    }
+    RunStats {
+        enter: rc.enter_count,
+        update: rc.update_count,
+        exit: rc.exit_count,
+        unchanged: rc.unchanged_count,
+        errors: errors.len(),
+        limited: rc.limited_count,
+    }
+}
+
+/// Which `optative::Reconcile` backend tracks a Kind's state between runs — a
+/// runtime choice (JS's dynamism means "which reconciler did this script pick"
+/// is only knowable at this point, not at compile time), read off the
+/// `optativeSet(...)`/`optativeJsonSet(...)`-tagged `reconciler` descriptor.
+enum ReconcilerBackend {
+    OptativeSet,
+    OptativeJsonSet,
+}
+
+impl ReconcilerBackend {
+    fn from_tag(ctx: &Ctx<'_>, tag: &str) -> rquickjs::Result<Self> {
+        match tag {
+            "optativeSet" => Ok(Self::OptativeSet),
+            "optativeJsonSet" => Ok(Self::OptativeJsonSet),
+            other => Err(throw_type_error(
+                ctx,
+                &format!("esto: unknown reconciler kind {other:?}"),
+            )),
+        }
+    }
+}
+
+/// Reads and validates `kind.reconciler`, returning the descriptor object and
+/// which backend it names.
+fn reconciler_backend<'js>(
+    ctx: &Ctx<'js>,
+    kind: &Object<'js>,
+) -> rquickjs::Result<(Object<'js>, ReconcilerBackend)> {
+    let reconciler_val: Value = kind.get("reconciler")?;
+    let reconciler: Object = reconciler_val.as_object().cloned().ok_or_else(|| {
+        throw_type_error(
+            ctx,
+            "esto: unit() requires `reconciler: optativeSet({ observe }) | optativeJsonSet({ file })`",
+        )
+    })?;
+    let tag: String = reconciler.get(tags::ESTO_RECONCILER_KIND).map_err(|_| {
+        throw_type_error(
+            ctx,
+            "esto: `reconciler` must be built with optativeSet(...) or optativeJsonSet(...)",
+        )
+    })?;
+    let backend = ReconcilerBackend::from_tag(ctx, &tag)?;
+    Ok((reconciler, backend))
+}
+
+fn build_desired<'js>(
+    leaves: Vec<Leaf<'js>>,
+    key_fn: &Function<'js>,
+    value_fn: &Function<'js>,
+) -> rquickjs::Result<Vec<JsLeaf<'js>>> {
+    let mut desired = Vec::new();
+    for leaf in leaves {
+        let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
+        let v: String = value_fn.call::<(Value,), String>((leaf.item.clone(),))?;
+        desired.push(JsLeaf {
+            key: k,
+            value_str: v,
+            item: leaf.item,
+            context: leaf.context,
+            context_data: leaf.context_data,
+        });
+    }
+    Ok(desired)
+}
+
+/// In-memory backend: state is reseeded from `reconciler.observe()` every run.
+fn reconcile_via_optative_set<'js>(
+    ctx: &Ctx<'js>,
+    reconciler: &Object<'js>,
+    key_fn: &Function<'js>,
+    value_fn: &Function<'js>,
+    desired: Vec<JsLeaf<'js>>,
+    rc: &mut ReconcileCtx<'js>,
 ) -> rquickjs::Result<RunStats> {
-    let observe_fn: Function = kind.get("observe")?;
+    let observe_fn: Function = reconciler.get("observe")?;
     let obs_raw: Value = observe_fn.call::<(), Value>(())?;
     let obs_val: Value = await_val(obs_raw)?;
-    let obs_arr = obs_val.into_array().ok_or_else(|| {
-        let err = ctx
-            .eval::<Value, _>(r#"new TypeError("esto: observe() must return an array")"#)
-            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
-        ctx.throw(err)
-    })?;
-
-    let key_fn: Function = kind.get("key")?;
-    let value_fn: Function = kind.get("value")?;
+    let obs_arr = obs_val
+        .into_array()
+        .ok_or_else(|| throw_type_error(ctx, "esto: observe() must return an array"))?;
 
     let mut initial: Vec<(String, JsLeafState<'js>)> = Vec::new();
     for i in 0..obs_arr.len() {
@@ -522,46 +776,81 @@ fn reconcile_kind<'js>(
         ));
     }
 
-    let mut desired: Vec<JsLeaf<'js>> = Vec::new();
-    for leaf in leaves {
-        let k: String = key_fn.call::<(Value,), String>((leaf.item.clone(),))?;
-        let v: String = value_fn.call::<(Value,), String>((leaf.item.clone(),))?;
-        desired.push(JsLeaf {
-            key: k,
-            value_str: v,
-            item: leaf.item,
-            context: leaf.context,
-            context_data: leaf.context_data,
-        });
-    }
-
     let mut set: OptativeSet<JsLeaf<'js>> = OptativeSet::with_initial_state(initial);
-    let mut rc = ReconcileCtx {
-        js_ctx: ctx.clone(),
-        kind: kind.clone(),
-        dry_run,
-        quiet,
-        limit,
-        dispatched: 0,
-        enter_count: 0,
-        update_count: 0,
-        exit_count: 0,
-        unchanged_count: 0,
-        limited_count: 0,
-    };
-    let errors = set.reconcile(desired, &mut rc, &mut ());
-    for (key, msg) in &errors {
-        eprintln!("[error] {key}: {msg}");
-    }
+    let errors = set.reconcile(desired, rc, &mut ());
+    Ok(run_stats_from(rc, &errors))
+}
 
-    Ok(RunStats {
-        enter: rc.enter_count,
-        update: rc.update_count,
-        exit: rc.exit_count,
-        unchanged: rc.unchanged_count,
-        errors: errors.len(),
-        limited: rc.limited_count,
-    })
+/// Jsonl-file-persisted backend: state survives across separate `esto`
+/// processes, seeded from `reconciler.file` with no `observe()` needed.
+fn reconcile_via_optative_json_set<'js>(
+    ctx: &Ctx<'js>,
+    reconciler: &Object<'js>,
+    desired: Vec<JsLeaf<'js>>,
+    dry_run: bool,
+    rc: &mut ReconcileCtx<'js>,
+) -> rquickjs::Result<RunStats> {
+    let file: String = reconciler.get("file")?;
+    let mut json_set: OptativeJsonSet<JsLeafJson<'js>> =
+        OptativeJsonSet::open(&file).map_err(|e| {
+            throw_type_error(
+                ctx,
+                &format!("esto: failed to open reconciler state file {file:?}: {e}"),
+            )
+        })?;
+    let desired: Vec<JsLeafJson<'js>> = desired.into_iter().map(JsLeafJson).collect();
+
+    // OptativeJsonSet::reconcile always persists — never invoke it in dry-run.
+    // Re-diff the same loaded entries through a throwaway in-memory OptativeSet
+    // instead, so dry-run never persists reconciled state to the file
+    // (OptativeJsonSet::open above may still delete a stale `<file>.new.<pid>`
+    // crash leftover — harmless crash-artifact cleanup, not state).
+    let (errors, persist_error) = if dry_run {
+        let initial: Vec<(String, JsonLeafState)> = json_set
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut set = OptativeSet::with_initial_state(initial);
+        (set.reconcile(desired, rc, &mut ()), None)
+    } else {
+        let errors = json_set.reconcile(desired, rc, &mut ());
+        (errors, json_set.persist_error().map(|e| e.to_string()))
+    };
+
+    let mut stats = run_stats_from(rc, &errors);
+    if let Some(msg) = persist_error {
+        eprintln!("[error] failed to persist reconciler state to {file}: {msg}");
+        stats.errors += 1;
+    }
+    Ok(stats)
+}
+
+/// Diffs `leaves` (the desired set) against this Kind's tracked state and
+/// drives enter/update/exit for the delta, via whichever `optative::Reconcile`
+/// backend `kind.reconciler` names.
+#[allow(clippy::too_many_arguments)]
+fn reconcile_kind<'js>(
+    ctx: &Ctx<'js>,
+    kind: &Object<'js>,
+    leaves: Vec<Leaf<'js>>,
+    dry_run: bool,
+    quiet: bool,
+    limit: Option<usize>,
+) -> rquickjs::Result<RunStats> {
+    let key_fn: Function = kind.get("key")?;
+    let value_fn: Function = kind.get("value")?;
+    let (reconciler, backend) = reconciler_backend(ctx, kind)?;
+    let desired = build_desired(leaves, &key_fn, &value_fn)?;
+    let mut rc = new_reconcile_ctx(ctx, kind, dry_run, quiet, limit);
+
+    match backend {
+        ReconcilerBackend::OptativeSet => {
+            reconcile_via_optative_set(ctx, &reconciler, &key_fn, &value_fn, desired, &mut rc)
+        }
+        ReconcilerBackend::OptativeJsonSet => {
+            reconcile_via_optative_json_set(ctx, &reconciler, desired, dry_run, &mut rc)
+        }
+    }
 }
 
 /// Builds a fresh `Runtime`/`Context` pair, wiring up the synthetic builtin
