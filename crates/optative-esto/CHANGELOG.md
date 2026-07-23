@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/kantord/optative/compare/esto-v0.0.6...esto-v0.0.7) - 2026-07-23
+
+### Added
+
+- *(optative-script)* support custom reconciler backends ([#53](https://github.com/kantord/optative/pull/53))
+- support .mdx input ([#46](https://github.com/kantord/optative/pull/46))
+
+### Fixed
+
+- *(release)* bump optative-script to 0.0.7 ([#50](https://github.com/kantord/optative/pull/50))
+
 ## [0.0.6](https://github.com/kantord/optative/compare/esto-v0.0.5...esto-v0.0.6) - 2026-07-19
 
 ### Added
