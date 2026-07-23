@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/kantord/optative/compare/optative-v0.1.3...optative-v0.1.4) - 2026-07-23
+
+### Added
+
+- *(optative-script)* support custom reconciler backends ([#53](https://github.com/kantord/optative/pull/53))
+- *(optative)* add jsonl-persisted OptativeJsonSet reconciler ([#52](https://github.com/kantord/optative/pull/52))
+
 ## [0.1.3](https://github.com/kantord/optative/compare/optative-v0.1.2...optative-v0.1.3) - 2026-07-19
 
 ### Other

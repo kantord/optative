@@ -1,6 +1,6 @@
 [package]
 name = "optative-script"
-version = "0.0.7"
+version = "0.0.8"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -9,7 +9,7 @@ keywords = ["scripting", "quickjs", "jsx", "reconciler", "optative"]
 categories = ["development-tools"]
 
 [dependencies]
-optative = { version = "0.1.3", path = "../optative" }
+optative = { version = "0.1.4", path = "../optative" }
 rquickjs = { version = "0.11", features = ["loader"] }
 oxc_allocator = "0.140.0"
 oxc_parser = "0.140.0"

@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "esto"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "clap",
  "glob",
@@ -772,7 +772,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "optative"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "optative-derive"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "optative",
  "proc-macro2",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "optative-process-pool"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "nix",
  "optative",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "optative-script"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "optative",
  "oxc_allocator",
@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "optative-script-mdx"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "markdown",
  "optative-script",
