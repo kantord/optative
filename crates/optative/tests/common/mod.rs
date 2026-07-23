@@ -4,7 +4,10 @@
 //! - the `Greeting` resource and its `Lifecycle` impl,
 //! - the `Api` REST client the lifecycle delegates to,
 //! - a tiny in-process HTTP server (`spawn_greetings_server`) that mimics the
-//!   real API so tests can run without a network.
+//!   real API so tests can run without a network,
+//! - `Spec`/`Log`, a minimal `Lifecycle` impl that just logs which hook fired,
+//!   for tests that care about enter/reconcile_self/exit call sequencing
+//!   rather than a realistic backing resource.
 
 #![allow(dead_code)] // each test only uses a subset of this module
 
@@ -13,6 +16,42 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+pub type Log = Arc<Mutex<Vec<(&'static str, String)>>>;
+
+#[derive(Clone)]
+pub struct Spec {
+    pub id: String,
+    pub value: i32,
+}
+
+impl Lifecycle for Spec {
+    type Key = String;
+    type State = i32;
+    type Context = Log;
+    type Output = ();
+    type Error = std::convert::Infallible;
+
+    fn key(&self) -> String {
+        self.id.clone()
+    }
+
+    fn enter(self, log: &mut Log, _: &mut ()) -> Result<i32, Self::Error> {
+        log.lock().unwrap().push(("enter", self.id));
+        Ok(self.value)
+    }
+
+    fn reconcile_self(self, state: &mut i32, log: &mut Log, _: &mut ()) -> Result<(), Self::Error> {
+        log.lock().unwrap().push(("reconcile_self", self.id));
+        *state = self.value;
+        Ok(())
+    }
+
+    fn exit(state: i32, log: &mut Log, _: &mut ()) -> Result<(), Self::Error> {
+        log.lock().unwrap().push(("exit", state.to_string()));
+        Ok(())
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Greeting {

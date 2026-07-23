@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
+pub mod json_set;
 pub mod reconcile;
+pub use json_set::OptativeJsonSet;
 pub use reconcile::{Reconcile, ReconcileErrors};
 
 pub struct LifecycleContext {
