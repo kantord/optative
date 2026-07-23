@@ -57,6 +57,15 @@ pub(crate) fn json_stringify<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> rquickjs::
     stringify.call((val,))
 }
 
+/// Deserializes `json` via JS `JSON.parse`. Used by `crate::engine::JsLeafJson`
+/// to reconstruct a "previous item" value from JSON text persisted across
+/// separate `esto` runs, since no live `rquickjs::Value` survives that.
+pub(crate) fn json_parse<'js>(ctx: &Ctx<'js>, json: &str) -> rquickjs::Result<Value<'js>> {
+    let json_obj: Object<'js> = ctx.globals().get("JSON")?;
+    let parse: Function<'js> = json_obj.get("parse")?;
+    parse.call((json.to_string(),))
+}
+
 fn object_assign<'js>(
     ctx: &Ctx<'js>,
     target: Object<'js>,

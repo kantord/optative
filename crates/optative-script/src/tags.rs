@@ -8,3 +8,6 @@ pub const ESTO_KIND: &str = "__estoKind";
 pub const ESTO_ID: &str = "__estoId";
 /// Marker property set on objects returned by the fs claim-File component.
 pub const FS_CLAIM: &str = "$estoFsClaim";
+/// Discriminant set by `optativeSet()`/`optativeJsonSet()` on `unit()`'s
+/// `reconciler` descriptor, naming which backend `reconcile_kind` should drive.
+pub const ESTO_RECONCILER_KIND: &str = "__estoReconcilerKind";

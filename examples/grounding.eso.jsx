@@ -12,13 +12,13 @@
  *     → prints [enter] lines, writes nothing, exit code = 2 (delta count)
  */
 
-import { h, Context, unit, prompt } from 'esto'
+import { h, Context, unit, prompt, optativeSet } from 'esto'
 
 // Kind: observe returns [] (nothing exists yet) so every desired item triggers enter.
 const Doc = unit({
   key:    (i) => i.name,
   value:  (i) => 'needs-doc',
-  observe: () => [],
+  reconciler: optativeSet({ observe: () => [] }),
   enter:  (i) => prompt`Document ${i.name}. Be concise: what it does, params, returns.`,
 })
 

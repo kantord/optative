@@ -110,11 +110,13 @@ store.reconcile(vec![
 ## CLI: `esto`
 
 `esto` runs declarative `.op.tsx`/`.eso.jsx` scripts instead of a Rust `Lifecycle` impl:
-define a `unit()` (key/value/observe/enter/update/exit) and a JSX tree describing the
-desired set, and `esto run <file>` diffs it against `observe()`'s reported current state,
-calling the right hook for each item — the same reconciliation `OptativeSet` does, just
-scripted. `esto --help` / `esto <subcommand> --help` has the full command reference
-(`run`, `watch`, `types`, `type-check`).
+define a `unit()` (key/value/reconciler/enter/update/exit) and a JSX tree describing the
+desired set. `reconciler` picks how state between runs is tracked —
+`optativeSet({ observe })` (re-derived every run, the default) or `optativeJsonSet({ file })`
+(jsonl-persisted, for state with nothing to observe) — and `esto run <file>` diffs the
+desired set against it, calling the right hook for each item: the same reconciliation
+`OptativeSet`/`OptativeJsonSet` do, just scripted. `esto --help` / `esto <subcommand> --help`
+has the full command reference (`run`, `watch`, `types`, `type-check`).
 
 Worked examples:
 - **[`examples/`](./examples)** — minimal, self-contained scripts in this repo.

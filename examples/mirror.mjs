@@ -12,7 +12,7 @@
  *   esto run --dry-run mirror.mjs     # shows diff without writing; exit = delta count
  */
 
-import { unit, sh, read, ls, exists } from 'esto'
+import { unit, sh, read, ls, exists, optativeSet } from 'esto'
 
 const write = (i) => sh`mkdir -p out && printf '%s\n' ${i.content} > out/${i.name}.txt`
 
@@ -30,15 +30,17 @@ export default unit({
     })
   },
 
-  observe: () => {
-    if (!exists('out')) return []
-    return ls('out')
-      .filter(f => f.endsWith('.txt'))
-      .map(f => ({
-        name: f.slice(0, -4),
-        content: read(`out/${f}`).trim(),
-      }))
-  },
+  reconciler: optativeSet({
+    observe: () => {
+      if (!exists('out')) return []
+      return ls('out')
+        .filter(f => f.endsWith('.txt'))
+        .map(f => ({
+          name: f.slice(0, -4),
+          content: read(`out/${f}`).trim(),
+        }))
+    },
+  }),
 
   enter:  (i) => write(i),
   update: (i) => write(i),

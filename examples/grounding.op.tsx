@@ -7,7 +7,7 @@
  * Usage: esto run examples/grounding.op.tsx
  */
 
-import { h, Context, unit, prompt } from 'esto'
+import { h, Context, unit, prompt, optativeSet } from 'esto'
 
 interface DocProps {
   name: string
@@ -16,7 +16,7 @@ interface DocProps {
 const Doc = unit({
   key:     (i: DocProps) => i.name,
   value:   (_i: DocProps) => 'needs-doc',
-  observe: (): DocProps[] => [],
+  reconciler: optativeSet({ observe: (): DocProps[] => [] }),
   enter:   (i: DocProps) => prompt`Document ${i.name}. Be concise: what it does, params, returns.`,
 })
 

@@ -86,6 +86,47 @@ pub fn register_unit(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     Ok(())
 }
 
+/// Builds a `reconciler` descriptor tagged with `backend_kind` (`"optativeSet"`
+/// or `"optativeJsonSet"`), copying `opts`'s own properties (`observe`/`file`)
+/// onto it — `optative_script::engine::reconcile_kind` reads the tag at runtime
+/// to pick which `optative::Reconcile` backend drives a `unit()`'s state.
+/// Named `backend_kind`, not `kind`: this file's `unit()`-returned Object is
+/// also called "kind" elsewhere in this codebase, a different concept.
+fn reconciler_fn<'js>(
+    ctx: Ctx<'js>,
+    backend_kind: &str,
+    opts: Object<'js>,
+) -> rquickjs::Result<Object<'js>> {
+    let result = Object::new(ctx.clone())?;
+    result.set(tags::ESTO_RECONCILER_KIND, backend_kind)?;
+    object_assign(&ctx, result.clone(), opts)?;
+    Ok(result)
+}
+
+fn optative_set_fn<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Object<'js>> {
+    reconciler_fn(ctx, "optativeSet", opts)
+}
+
+pub fn register_optative_set(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.globals().set(
+        "__esto_optative_set",
+        Function::new(ctx.clone(), optative_set_fn)?,
+    )?;
+    Ok(())
+}
+
+fn optative_json_set_fn<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Object<'js>> {
+    reconciler_fn(ctx, "optativeJsonSet", opts)
+}
+
+pub fn register_optative_json_set(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.globals().set(
+        "__esto_optative_json_set",
+        Function::new(ctx.clone(), optative_json_set_fn)?,
+    )?;
+    Ok(())
+}
+
 fn prompt_fn<'js>(
     ctx: Ctx<'js>,
     strings: Array<'js>,

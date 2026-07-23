@@ -302,12 +302,12 @@ export default (): unknown => {
         fs::write(
             dir.path().join("script.op.tsx"),
             r#"
-import { h, unit } from 'esto'
+import { h, unit, optativeSet } from 'esto'
 
 const Thing = unit({
   key: (i: { name: string }) => i.name,
   value: () => 'v',
-  observe: () => [],
+  reconciler: optativeSet({ observe: () => [] }),
   enter: () => { throw new Error('distinctive-enter-marker-7') },
 })
 
@@ -373,12 +373,12 @@ export default (): unknown => [<Thing name="widget" />]
         fs::write(
             dir.path().join("script.op.tsx"),
             r#"
-import { h, unit } from 'esto'
+import { h, unit, optativeSet } from 'esto'
 
 const Thing = unit({
   key: (i: { name: string; v: string }) => i.name,
   value: (i: { name: string; v: string }) => i.v,
-  observe: () => [{ name: 'widget', v: 'old' }],
+  reconciler: optativeSet({ observe: () => [{ name: 'widget', v: 'old' }] }),
   update: () => { throw new Error('distinctive-update-marker-13') },
   exit: () => { throw new Error('SHOULD-NOT-BE-CALLED') },
 })
@@ -413,25 +413,23 @@ export default (): unknown => [<Thing name="widget" v="new" />]
 mod limit {
     use super::*;
 
-    #[test]
-    fn caps_dispatches_and_reports_the_rest_as_limited() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("script.op.tsx"),
-            r#"
-import { h, unit } from 'esto'
+    const THREE_ITEM_SCRIPT: &str = r#"
+import { h, unit, optativeSet } from 'esto'
 
 const Thing = unit({
   key: (i: { name: string }) => i.name,
   value: () => 'v',
-  observe: () => [],
+  reconciler: optativeSet({ observe: () => [] }),
   enter: () => {},
 })
 
 export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} />)
-"#,
-        )
-        .unwrap();
+"#;
+
+    #[test]
+    fn caps_dispatches_and_reports_the_rest_as_limited() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("script.op.tsx"), THREE_ITEM_SCRIPT).unwrap();
 
         let output = esto()
             .args(["run", "--limit", "1", "script.op.tsx"])
@@ -458,22 +456,7 @@ export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} /
     #[test]
     fn without_limit_all_items_dispatch_and_no_warning_appears() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("script.op.tsx"),
-            r#"
-import { h, unit } from 'esto'
-
-const Thing = unit({
-  key: (i: { name: string }) => i.name,
-  value: () => 'v',
-  observe: () => [],
-  enter: () => {},
-})
-
-export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} />)
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("script.op.tsx"), THREE_ITEM_SCRIPT).unwrap();
 
         let output = esto()
             .args(["run", "script.op.tsx"])
@@ -486,6 +469,276 @@ export default (): unknown => ['a', 'b', 'c'].map((name) => <Thing name={name} /
         assert!(stderr.contains("3 enter"));
         assert!(!stderr.contains("limited"));
         assert!(!stderr.contains("not stable across runs"));
+    }
+}
+
+/// Coverage for the `reconciler:` backend choice (optative#48): `optativeSet`
+/// is exercised throughout the rest of this file; these tests cover the new
+/// `optativeJsonSet` path, whose state must survive across separate `esto run`
+/// processes, not just one in-process reconcile() call.
+mod reconciler_backends {
+    use super::*;
+
+    #[test]
+    fn unit_without_reconciler_reports_a_clear_error() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.tsx"),
+            r#"
+import { h, unit } from 'esto'
+
+const Thing = unit({
+  key: (i: { name: string }) => i.name,
+  value: () => 'v',
+  enter: () => {},
+})
+
+export default (): unknown => [<Thing name="widget" />]
+"#,
+        )
+        .unwrap();
+
+        let output = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("requires `reconciler:"),
+            "error should explain that `reconciler` is required, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn optative_json_set_seeds_state_from_file_with_no_observe() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("script.op.tsx"),
+            r#"
+import { h, unit, sh, optativeJsonSet } from 'esto'
+
+const TaskDispatch = unit({
+  key: (i: { name: string; v: string }) => i.name,
+  value: (i: { name: string; v: string }) => i.v,
+  reconciler: optativeJsonSet({ file: '.esto-state/tasks.jsonl' }),
+  enter: (i: { name: string; v: string }) => sh`echo enter:${i.name} >> log.txt`,
+})
+
+export default (): unknown => [<TaskDispatch name="t1" v="v1" />]
+"#,
+        )
+        .unwrap();
+
+        // First run: no state file yet → enters.
+        let out1 = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out1.status.success(), "first run should exit 0");
+        let stderr1 = String::from_utf8_lossy(&out1.stderr);
+        assert!(
+            stderr1.contains("[enter] t1"),
+            "first run should enter t1, got: {stderr1}"
+        );
+        assert!(
+            dir.path().join(".esto-state/tasks.jsonl").exists(),
+            "optativeJsonSet should persist a state file"
+        );
+        let log_after_first = fs::read_to_string(dir.path().join("log.txt")).unwrap_or_default();
+        assert_eq!(
+            log_after_first.matches("enter:t1").count(),
+            1,
+            "enter should have run exactly once, got log: {log_after_first}"
+        );
+
+        // Second run, no `observe()` at all: the jsonl file is what tells
+        // reconcile_kind t1 already exists, so it's unchanged, not re-entered.
+        let out2 = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out2.status.success(), "second run should exit 0");
+        let stderr2 = String::from_utf8_lossy(&out2.stderr);
+        assert!(
+            !stderr2.contains("[enter]"),
+            "second run must not re-enter t1 (state should load from the jsonl file), got: {stderr2}"
+        );
+        assert!(
+            stderr2.contains("1 unchanged"),
+            "second run should report t1 as unchanged, got: {stderr2}"
+        );
+        let log_after_second = fs::read_to_string(dir.path().join("log.txt")).unwrap();
+        assert_eq!(
+            log_after_second.matches("enter:t1").count(),
+            1,
+            "enter must still have run only once across both processes, got log: {log_after_second}"
+        );
+    }
+
+    #[test]
+    fn optative_json_set_update_reconstructs_previous_item_across_separate_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = r#"
+import { h, unit, sh, optativeJsonSet } from 'esto'
+
+interface Task { name: string; v: string }
+
+const TaskDispatch = unit<Task>({
+  key: (i) => i.name,
+  value: (i) => i.v,
+  reconciler: optativeJsonSet({ file: '.esto-state/tasks.jsonl' }),
+  enter: (i: Task) => sh`echo enter:${i.name}:${i.v} >> log.txt`,
+  update: (next: Task, prev: Task) => sh`echo update:${next.name}:${next.v}:prev=${prev.v} >> log.txt`,
+})
+
+export const make = (v: string): unknown => [<TaskDispatch name="t1" v={v} />]
+"#;
+        fs::write(dir.path().join("lib.op.tsx"), script).unwrap();
+        fs::write(
+            dir.path().join("run1.op.tsx"),
+            "import { make } from './lib.op.tsx'\nexport default (): unknown => make('v1')\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("run2.op.tsx"),
+            "import { make } from './lib.op.tsx'\nexport default (): unknown => make('v2')\n",
+        )
+        .unwrap();
+
+        // Run 1 (separate process): enters with v1.
+        let out1 = esto()
+            .args(["run", "run1.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out1.status.success(), "run1 should exit 0");
+
+        // Run 2 is a brand-new process — no live JS value from run1 survives —
+        // so `prev` must come from the persisted jsonl file, not memory.
+        let out2 = esto()
+            .args(["run", "run2.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out2.status.success(), "run2 should exit 0");
+        let stderr2 = String::from_utf8_lossy(&out2.stderr);
+        assert!(
+            stderr2.contains("[update] t1"),
+            "run2 should update t1, got: {stderr2}"
+        );
+
+        let log = fs::read_to_string(dir.path().join("log.txt")).unwrap();
+        assert!(
+            log.contains("update:t1:v2:prev=v1"),
+            "update should receive the previous item reconstructed from the jsonl \
+             file written by the earlier, separate esto process, got log: {log}"
+        );
+    }
+
+    #[test]
+    fn optative_json_set_exit_removes_entry_from_the_state_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // `keepalive` stays desired in both runs so this Kind still produces a
+        // leaf in run 2 — a Kind with zero leaves never reaches reconcile_kind
+        // at all (pre-existing, unrelated to the reconciler backend under test).
+        let with_item = r#"
+import { h, unit, sh, optativeJsonSet } from 'esto'
+
+const TaskDispatch = unit({
+  key: (i: { name: string; v: string }) => i.name,
+  value: (i: { name: string; v: string }) => i.v,
+  reconciler: optativeJsonSet({ file: '.esto-state/tasks.jsonl' }),
+  enter: (i: { name: string; v: string }) => sh`echo enter:${i.name} >> log.txt`,
+  exit: (i: { name: string; v: string }) => sh`echo exit:${i.name}:${i.v} >> log.txt`,
+})
+
+export default (): unknown => [<TaskDispatch name="t1" v="v1" />, <TaskDispatch name="keepalive" v="v1" />]
+"#;
+        let without_item = with_item.replace(
+            "export default (): unknown => [<TaskDispatch name=\"t1\" v=\"v1\" />, <TaskDispatch name=\"keepalive\" v=\"v1\" />]",
+            "export default (): unknown => [<TaskDispatch name=\"keepalive\" v=\"v1\" />]",
+        );
+        fs::write(dir.path().join("script.op.tsx"), with_item).unwrap();
+
+        esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        let state_after_enter =
+            fs::read_to_string(dir.path().join(".esto-state/tasks.jsonl")).unwrap();
+        assert!(state_after_enter.contains("t1"));
+
+        fs::write(dir.path().join("script.op.tsx"), without_item).unwrap();
+        let output = esto()
+            .args(["run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("[exit] t1"),
+            "removing the desired item should trigger exit(), got: {stderr}"
+        );
+
+        let log = fs::read_to_string(dir.path().join("log.txt")).unwrap();
+        assert!(
+            log.contains("exit:t1:v1"),
+            "exit() should receive the item reconstructed from the persisted state, got: {log}"
+        );
+
+        let state_after_exit =
+            fs::read_to_string(dir.path().join(".esto-state/tasks.jsonl")).unwrap();
+        assert!(
+            !state_after_exit.contains("t1"),
+            "the exited item must be removed from the persisted state file, got: {state_after_exit}"
+        );
+    }
+
+    #[test]
+    fn optative_json_set_dry_run_never_writes_the_state_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = r#"
+import { h, unit, sh, optativeJsonSet } from 'esto'
+
+const TaskDispatch = unit({
+  key: (i: { name: string; v: string }) => i.name,
+  value: (i: { name: string; v: string }) => i.v,
+  reconciler: optativeJsonSet({ file: '.esto-state/tasks.jsonl' }),
+  enter: (i: { name: string; v: string }) => sh`echo enter:${i.name} >> log.txt`,
+})
+
+export default (): unknown => [<TaskDispatch name="t1" v="v1" />]
+"#;
+        fs::write(dir.path().join("script.op.tsx"), script).unwrap();
+
+        let output = esto()
+            .args(["run", "--dry-run", "script.op.tsx"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "dry-run should exit with the delta count (1 enter)"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("[enter] t1"));
+        assert!(
+            !dir.path().join(".esto-state").exists(),
+            "dry-run must not create the reconciler state file or directory"
+        );
+        assert!(
+            !dir.path().join("log.txt").exists(),
+            "dry-run must not actually run enter()"
+        );
     }
 }
 
@@ -503,13 +756,13 @@ mod esto_fs {
 
         // Script: use File glob to enumerate *.txt (root only) and mark each as observed
         let script = r#"
-import { h, unit } from 'esto'
+import { h, unit, optativeSet } from 'esto'
 import { File } from 'esto/fs'
 
 const Seen = unit({
   key: (x) => x.file,
   value: (x) => x.file,
-  observe: () => [],
+  reconciler: optativeSet({ observe: () => [] }),
 })
 
 export default () => (
@@ -654,7 +907,7 @@ mod esto_types {
         let dir = tempfile::tempdir().unwrap();
 
         let fixture = r##"
-import { h, Fragment, unit, sh, Context } from 'esto'
+import { h, Fragment, unit, sh, Context, optativeSet } from 'esto'
 import { GitRepo, Folder, File } from 'esto/fs'
 
 // Bug 1: sh returns string so JSON.parse(sh`...`) must typecheck
@@ -666,7 +919,7 @@ interface Item { path: string; hash: string }
 const FileUnit = unit<Item>({
   key: (f) => f.path,
   value: (f) => f.hash,
-  observe: () => [],
+  reconciler: optativeSet({ observe: () => [] }),
   enter: (f) => sh`touch ${f.path}`,
 })
 
@@ -735,6 +988,14 @@ export default () => (
         assert!(
             dts.contains("export function unit"),
             "esto module should export unit"
+        );
+        assert!(
+            dts.contains("export function optativeSet"),
+            "esto module should export optativeSet"
+        );
+        assert!(
+            dts.contains("export function optativeJsonSet"),
+            "esto module should export optativeJsonSet"
         );
         assert!(
             dts.contains("export function exists"),
