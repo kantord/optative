@@ -1,41 +1,7 @@
-use optative::{Lifecycle, OptativeSet, Reconcile};
+mod common;
+use common::{Log, Spec};
+use optative::{OptativeSet, Reconcile};
 use std::sync::{Arc, Mutex};
-
-type Log = Arc<Mutex<Vec<(&'static str, String)>>>;
-
-#[derive(Clone)]
-struct Spec {
-    id: String,
-    value: i32,
-}
-
-impl Lifecycle for Spec {
-    type Key = String;
-    type State = i32;
-    type Context = Log;
-    type Output = ();
-    type Error = std::convert::Infallible;
-
-    fn key(&self) -> String {
-        self.id.clone()
-    }
-
-    fn enter(self, log: &mut Log, _: &mut ()) -> Result<i32, Self::Error> {
-        log.lock().unwrap().push(("enter", self.id));
-        Ok(self.value)
-    }
-
-    fn reconcile_self(self, state: &mut i32, log: &mut Log, _: &mut ()) -> Result<(), Self::Error> {
-        log.lock().unwrap().push(("reconcile_self", self.id));
-        *state = self.value;
-        Ok(())
-    }
-
-    fn exit(state: i32, log: &mut Log, _: &mut ()) -> Result<(), Self::Error> {
-        log.lock().unwrap().push(("exit", state.to_string()));
-        Ok(())
-    }
-}
 
 #[test]
 fn seeded_items_never_fire_enter() {
