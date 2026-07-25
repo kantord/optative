@@ -531,7 +531,8 @@ mod tests {
             // Simulate a prior crash streak on a child that has, in fact, been
             // up long enough to count as recovered.
             state.restart_count = 5;
-            state.spawned_at = Instant::now() - RESPAWN_BACKOFF_RESET_UPTIME - Duration::from_millis(50);
+            state.spawned_at =
+                Instant::now() - RESPAWN_BACKOFF_RESET_UPTIME - Duration::from_millis(50);
             std::thread::sleep(Duration::from_millis(50));
             assert!(matches!(state.child.try_wait(), Ok(Some(_))));
 
