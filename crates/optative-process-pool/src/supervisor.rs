@@ -135,6 +135,18 @@ impl ProcessSupervisor {
     pub fn iter(&self) -> impl Iterator<Item = (&ProcessIdentity, &ProcessState)> {
         self.pool.iter()
     }
+
+    /// Drains every tracked process by reconciling against an empty desired
+    /// set, driving each one through `Lifecycle::exit` (SIGTERM, then
+    /// SIGKILL after `SHUTDOWN_GRACE_PERIOD`).
+    ///
+    /// Dropping a `ProcessSupervisor` does not do this on its own: `Child`'s
+    /// own `Drop` never kills its process, so call this explicitly before
+    /// the owning program exits or re-execs — otherwise every process it's
+    /// still tracking is abandoned rather than torn down.
+    pub fn shutdown_all(&mut self) -> ReconcileErrors<ProcessIdentity, SpawnError> {
+        self.reconcile(vec![])
+    }
 }
 
 #[cfg(test)]
@@ -288,5 +300,91 @@ mod tests {
                 "file should be cleaned up after process exits"
             );
         }
+    }
+
+    #[test]
+    fn shutdown_all_terminates_running_child_processes() {
+        let (tx, _rx) = mpsc::channel();
+        let mut supervisor = ProcessSupervisor::new(tx);
+
+        let spec = ProcessSpec {
+            identity: ProcessIdentity {
+                bin: "/bin/sh".into(),
+                key: "shutdown-test".into(),
+            },
+            args: vec!["-c".into(), "sleep 60".into()],
+            env: BTreeMap::new(),
+            current_dir: None,
+            props: None,
+        };
+        supervisor.reconcile(vec![spec]);
+
+        let pid = supervisor
+            .iter()
+            .next()
+            .expect("process should be tracked after reconcile")
+            .1
+            .child
+            .id();
+
+        let errors = supervisor.shutdown_all();
+        assert!(errors.is_empty());
+
+        let pid = nix::unistd::Pid::from_raw(pid as i32);
+        assert_eq!(
+            nix::sys::signal::kill(pid, None),
+            Err(nix::errno::Errno::ESRCH),
+            "child should have exited once shutdown_all returned"
+        );
+    }
+
+    #[test]
+    fn shutdown_all_terminates_every_tracked_process() {
+        let (tx, _rx) = mpsc::channel();
+        let mut supervisor = ProcessSupervisor::new(tx);
+
+        let mk = |key: &str| ProcessSpec {
+            identity: ProcessIdentity {
+                bin: "/bin/sh".into(),
+                key: key.into(),
+            },
+            args: vec!["-c".into(), "sleep 60".into()],
+            env: BTreeMap::new(),
+            current_dir: None,
+            props: None,
+        };
+        supervisor.reconcile(vec![mk("a"), mk("b"), mk("c")]);
+
+        let pids: Vec<i32> = supervisor
+            .iter()
+            .map(|(_, state)| state.child.id() as i32)
+            .collect();
+        assert_eq!(pids.len(), 3, "all three processes should be tracked");
+
+        let errors = supervisor.shutdown_all();
+        assert!(errors.is_empty());
+
+        for pid in pids {
+            let pid = nix::unistd::Pid::from_raw(pid);
+            assert_eq!(
+                nix::sys::signal::kill(pid, None),
+                Err(nix::errno::Errno::ESRCH),
+                "every tracked process should have exited, pid {pid} did not"
+            );
+        }
+        assert_eq!(
+            supervisor.iter().count(),
+            0,
+            "supervisor should track nothing after shutdown_all"
+        );
+    }
+
+    #[test]
+    fn shutdown_all_on_empty_supervisor_is_a_no_op() {
+        let (tx, _rx) = mpsc::channel();
+        let mut supervisor = ProcessSupervisor::new(tx);
+
+        let errors = supervisor.shutdown_all();
+        assert!(errors.is_empty());
     }
 }
