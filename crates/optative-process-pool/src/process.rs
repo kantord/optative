@@ -13,6 +13,26 @@ use super::{StreamItem, StreamKind};
 /// How long [`Lifecycle::exit`] waits for SIGTERM before escalating to SIGKILL.
 pub const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
+/// Backoff delay before the first respawn attempt after a crash.
+const INITIAL_RESPAWN_BACKOFF: Duration = Duration::from_millis(200);
+
+/// Ceiling on respawn backoff, so a permanently-broken binary still gets
+/// retried occasionally instead of backing off forever.
+const MAX_RESPAWN_BACKOFF: Duration = Duration::from_secs(5);
+
+/// A child that stays up at least this long is considered to have recovered;
+/// its next crash restarts the backoff sequence from scratch instead of
+/// continuing to escalate.
+const RESPAWN_BACKOFF_RESET_UPTIME: Duration = Duration::from_secs(1);
+
+/// Delay before the `attempt`-th respawn (1-indexed), doubling each attempt
+/// up to [`MAX_RESPAWN_BACKOFF`].
+fn respawn_backoff(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(6);
+    let millis = INITIAL_RESPAWN_BACKOFF.as_millis() as u64 * 2u64.saturating_pow(exponent);
+    Duration::from_millis(millis).min(MAX_RESPAWN_BACKOFF)
+}
+
 /// Stable identity for a process: uniquely identifies which process to manage.
 /// Used as the key in `Lifecycle` so that `OptativeSet` can track processes by identity.
 #[derive(Hash, Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -35,6 +55,14 @@ pub struct ProcessState {
     pub child: std::process::Child,
     pub event_tx: mpsc::Sender<serde_json::Value>,
     pub last_sent_props: Option<serde_json::Value>,
+    /// When this child was spawned, used to decide whether a future crash
+    /// should escalate backoff or reset it.
+    spawned_at: Instant,
+    /// Consecutive crash count not yet redeemed by a stable uptime.
+    restart_count: u32,
+    /// Earliest time a respawn may happen; `None` means respawn is allowed
+    /// as soon as an exit is observed.
+    next_respawn_at: Option<Instant>,
 }
 
 /// Error type for process spawning failures.
@@ -161,6 +189,9 @@ pub(super) fn spawn_process(
         child,
         event_tx,
         last_sent_props: None,
+        spawned_at: Instant::now(),
+        restart_count: 0,
+        next_respawn_at: None,
     })
 }
 
@@ -199,9 +230,31 @@ impl Lifecycle for ProcessSource {
         output: &mut Self::Output,
     ) -> Result<(), Self::Error> {
         if matches!(state.child.try_wait(), Ok(Some(_))) {
-            tracing::warn!(bin = %self.identity.bin, "process exited");
+            let now = Instant::now();
+            if let Some(next_respawn_at) = state.next_respawn_at {
+                if now < next_respawn_at {
+                    // Still backing off from a prior crash; leave the dead
+                    // child in place rather than respawn-looping.
+                    return Ok(());
+                }
+            }
+
+            let uptime = now.saturating_duration_since(state.spawned_at);
+            let restart_count = if uptime >= RESPAWN_BACKOFF_RESET_UPTIME {
+                1
+            } else {
+                state.restart_count + 1
+            };
+
+            tracing::warn!(
+                bin = %self.identity.bin,
+                restart_count,
+                "process exited; respawning"
+            );
             let props = self.props.clone();
             let mut new_state = spawn_process(self, output)?;
+            new_state.restart_count = restart_count;
+            new_state.next_respawn_at = Some(now + respawn_backoff(restart_count));
             if let Some(p) = props {
                 let _ = new_state.event_tx.send(p.clone());
                 new_state.last_sent_props = Some(p);
@@ -373,11 +426,122 @@ mod tests {
     }
 
     mod lifecycle {
-        use super::super::{ProcessIdentity, ProcessSource, SHUTDOWN_GRACE_PERIOD, SpawnError};
+        use super::super::{
+            ProcessIdentity, ProcessSource, RESPAWN_BACKOFF_RESET_UPTIME, SHUTDOWN_GRACE_PERIOD,
+            SpawnError,
+        };
         use optative::Lifecycle;
         use std::collections::BTreeMap;
         use std::sync::mpsc;
         use std::time::{Duration, Instant};
+
+        fn crash_spec(key: &str) -> ProcessSource {
+            ProcessSource {
+                identity: ProcessIdentity {
+                    bin: "/bin/sh".to_string(),
+                    key: key.to_string(),
+                },
+                args: vec!["-c".to_string(), "exit 1".to_string()],
+                env: BTreeMap::new(),
+                current_dir: None,
+                props: None,
+            }
+        }
+
+        #[test]
+        fn reconcile_self_withholds_respawn_while_backing_off() {
+            let (mut tx, _rx) = mpsc::channel();
+            let spec = crash_spec("crashloop-withhold");
+
+            let mut state = spec
+                .clone()
+                .enter(&mut (), &mut tx)
+                .expect("enter must succeed");
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(matches!(state.child.try_wait(), Ok(Some(_))));
+
+            // First crash respawns immediately: no backoff is active yet.
+            spec.clone()
+                .reconcile_self(&mut state, &mut (), &mut tx)
+                .expect("first respawn should succeed");
+            assert_eq!(state.restart_count, 1);
+            let respawned_pid = state.child.id();
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                matches!(state.child.try_wait(), Ok(Some(_))),
+                "respawned child should also have crashed"
+            );
+
+            // Reconciling again immediately must not respawn: backoff is active.
+            spec.clone()
+                .reconcile_self(&mut state, &mut (), &mut tx)
+                .expect("gated reconcile should succeed");
+            assert_eq!(
+                state.child.id(),
+                respawned_pid,
+                "respawn must be withheld during the backoff window"
+            );
+            assert_eq!(
+                state.restart_count, 1,
+                "restart count must not escalate while gated"
+            );
+        }
+
+        #[test]
+        fn reconcile_self_escalates_backoff_on_repeated_crashes() {
+            let (mut tx, _rx) = mpsc::channel();
+            let spec = crash_spec("crashloop-escalate");
+
+            let mut state = spec
+                .clone()
+                .enter(&mut (), &mut tx)
+                .expect("enter must succeed");
+            std::thread::sleep(Duration::from_millis(50));
+
+            spec.clone()
+                .reconcile_self(&mut state, &mut (), &mut tx)
+                .expect("first respawn should succeed");
+            assert_eq!(state.restart_count, 1);
+            let first_backoff_until = state.next_respawn_at;
+
+            // Wait past the (short) initial backoff so the next crash is free
+            // to respawn and escalate the streak.
+            std::thread::sleep(Duration::from_millis(300));
+            spec.reconcile_self(&mut state, &mut (), &mut tx)
+                .expect("second respawn should succeed");
+            assert_eq!(
+                state.restart_count, 2,
+                "consecutive fast crashes should escalate the restart count"
+            );
+            assert!(
+                state.next_respawn_at.unwrap() > first_backoff_until.unwrap(),
+                "backoff window should grow with repeated crashes"
+            );
+        }
+
+        #[test]
+        fn reconcile_self_resets_restart_count_after_stable_uptime() {
+            let (mut tx, _rx) = mpsc::channel();
+            let spec = crash_spec("crashloop-reset");
+
+            let mut state = spec
+                .clone()
+                .enter(&mut (), &mut tx)
+                .expect("enter must succeed");
+            // Simulate a prior crash streak on a child that has, in fact, been
+            // up long enough to count as recovered.
+            state.restart_count = 5;
+            state.spawned_at = Instant::now() - RESPAWN_BACKOFF_RESET_UPTIME - Duration::from_millis(50);
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(matches!(state.child.try_wait(), Ok(Some(_))));
+
+            spec.reconcile_self(&mut state, &mut (), &mut tx)
+                .expect("respawn should succeed");
+            assert_eq!(
+                state.restart_count, 1,
+                "a stable uptime should reset the crash streak instead of escalating it"
+            );
+        }
 
         #[test]
         fn reconcile_self_propagates_err_when_restart_spawn_fails() {
