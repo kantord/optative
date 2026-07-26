@@ -34,6 +34,126 @@ pub struct LowerError {
     message: String,
 }
 
+impl LowerError {
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn column(&self) -> usize {
+        self.column
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// One run of bytes copied verbatim from the `.op.mdx` into the lowered TSX.
+///
+/// Every byte of *user-authored code* in the lowered output arrives via one of
+/// these — [`build_root_section`] slices ESM statements and flow JSX/expression
+/// nodes straight out of the source, and only `<Context>` wrappers, the
+/// synthesized `export default`, and array punctuation are generated. So the
+/// span list is a complete map of the type-checkable surface, which is what
+/// lets a `tsc` diagnostic be traced back to an exact source line *and column*.
+///
+/// Prose is deliberately absent: it is folded into JSON string literals, which
+/// have no types to report errors against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    /// Byte offset of this run in the lowered TSX.
+    pub lowered_start: usize,
+    /// Byte offset of the same run in the original `.op.mdx` source.
+    pub source_start: usize,
+    /// Length of the run in bytes (identical on both sides — it is a copy).
+    pub len: usize,
+}
+
+/// A lowered `.op.mdx`, plus the map needed to trace positions back to it.
+#[derive(Debug, Clone)]
+pub struct Lowered {
+    /// The synthetic TSX source.
+    pub tsx: String,
+    /// Verbatim runs, sorted by `lowered_start`.
+    pub spans: Vec<Span>,
+}
+
+/// Where a lowered-TSX position came from in the original `.op.mdx`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mapped {
+    /// The position fell inside verbatim user-authored source.
+    Exact { line: usize, column: usize },
+    /// The position fell in synthesized code (a `<Context>` wrapper, the
+    /// `export default`, array punctuation). Attributed to the start of the
+    /// nearest preceding verbatim run, so the report still lands somewhere the
+    /// author actually wrote.
+    Generated { line: usize, column: usize },
+}
+
+impl Mapped {
+    pub fn line(&self) -> usize {
+        match self {
+            Mapped::Exact { line, .. } | Mapped::Generated { line, .. } => *line,
+        }
+    }
+
+    pub fn column(&self) -> usize {
+        match self {
+            Mapped::Exact { column, .. } | Mapped::Generated { column, .. } => *column,
+        }
+    }
+}
+
+impl Lowered {
+    /// Maps a 1-based `(line, column)` in [`Lowered::tsx`] back to a 1-based
+    /// `(line, column)` in `source`, the `.op.mdx` this was lowered from.
+    ///
+    /// Columns are counted in UTF-16 code units on both sides, matching how
+    /// `tsc` reports them. Returns `None` only when `line`/`column` don't
+    /// address a real position in `tsx`, or when there is no preceding verbatim
+    /// run to attribute a synthesized position to.
+    pub fn map_position(&self, source: &str, line: usize, column: usize) -> Option<Mapped> {
+        let lowered_offset = offset_of_position(&self.tsx, line, column)?;
+        match self.span_at(lowered_offset) {
+            Some(span) => {
+                let source_offset = span.source_start + (lowered_offset - span.lowered_start);
+                let (line, column) = position_of_offset(source, source_offset);
+                Some(Mapped::Exact { line, column })
+            }
+            None => {
+                let preceding = self
+                    .spans
+                    .iter()
+                    .rev()
+                    .find(|s| s.lowered_start <= lowered_offset)?;
+                let (line, column) = position_of_offset(source, preceding.source_start);
+                Some(Mapped::Generated { line, column })
+            }
+        }
+    }
+
+    /// The verbatim run containing `lowered_offset`, if any. Spans are sorted
+    /// and non-overlapping, so a binary search suffices.
+    fn span_at(&self, lowered_offset: usize) -> Option<&Span> {
+        let index = match self
+            .spans
+            .binary_search_by_key(&lowered_offset, |s| s.lowered_start)
+        {
+            Ok(exact) => exact,
+            Err(0) => return None,
+            Err(after) => after - 1,
+        };
+        let span = &self.spans[index];
+        (lowered_offset < span.lowered_start + span.len).then_some(span)
+    }
+}
+
+/// Verbatim source text together with the byte offset it was copied from.
+struct Spanned {
+    text: String,
+    source_start: usize,
+}
+
 struct Section {
     /// Heading rank (1..=6); 0 for the implicit root section with no heading.
     depth: u8,
