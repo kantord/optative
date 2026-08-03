@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.8...optative-process-pool-v0.0.9) - 2026-07-25
+
+### Added
+
+- *(process-pool)* add ProcessSupervisor::shutdown_all ([#58](https://github.com/kantord/optative/pull/58))
+
+### Fixed
+
+- *(process-pool)* add backoff before respawning crashed children ([#54](https://github.com/kantord/optative/pull/54))
+
 ## [0.0.8](https://github.com/kantord/optative/compare/optative-process-pool-v0.0.7...optative-process-pool-v0.0.8) - 2026-07-23
 
 ### Other
