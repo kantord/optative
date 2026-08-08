@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8](https://github.com/kantord/optative/compare/esto-v0.0.7...esto-v0.0.8) - 2026-08-08
+
+### Fixed
+
+- *(deps)* update rust crate notify to v8 ([#81](https://github.com/kantord/optative/pull/81))
+
+### Other
+
+- update several dependencies ([#88](https://github.com/kantord/optative/pull/88))
+
 ## [0.0.7](https://github.com/kantord/optative/compare/esto-v0.0.6...esto-v0.0.7) - 2026-07-23
 
 ### Added
