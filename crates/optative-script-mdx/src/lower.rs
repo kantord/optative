@@ -169,13 +169,21 @@ struct Section {
 
 enum Child {
     /// Verbatim source text of a flow JSX element or flow `{expression}`.
-    Verbatim(String),
+    Verbatim(Spanned),
     Section(Section),
 }
 
 /// Lowers `.op.mdx` source (read from `path`, used only for diagnostics) to
 /// a synthetic TSX source string.
 pub fn lower_to_tsx(source: &str, path: &str) -> Result<String, LowerError> {
+    lower_to_tsx_with_spans(source, path).map(|lowered| lowered.tsx)
+}
+
+/// Like [`lower_to_tsx`], but also returns the [`Span`] map tracing each
+/// verbatim run of the output back to the `.op.mdx` it was copied from — see
+/// [`Lowered::map_position`]. Used by `esto type-check` to rewrite `tsc`
+/// diagnostics so they point at the real file.
+pub fn lower_to_tsx_with_spans(source: &str, path: &str) -> Result<Lowered, LowerError> {
     let mut options = ParseOptions::mdx();
     // markdown-rs calls this at each candidate blank-line/EOF boundary to
     // decide whether the accumulated `import`/`export` statement is done.
@@ -209,12 +217,13 @@ pub fn lower_to_tsx(source: &str, path: &str) -> Result<String, LowerError> {
     let (root_section, esm_statements) = build_root_section(source, path, root_children)?;
 
     let mut body = String::new();
-    compile_root(&root_section, &mut body);
+    let mut body_spans = Vec::new();
+    compile_root(&root_section, &mut body, &mut body_spans);
 
     if body.contains("<Context")
         && !esm_statements
             .iter()
-            .any(|s| binds_identifier(s, "Context"))
+            .any(|s| binds_identifier(&s.text, "Context"))
     {
         return Err(LowerError {
             path: path.to_string(),
@@ -227,15 +236,29 @@ pub fn lower_to_tsx(source: &str, path: &str) -> Result<String, LowerError> {
         });
     }
 
+    // ESM statements are hoisted above the body, so their spans are emitted
+    // first and the body's are shifted by however much precedes them. Both
+    // halves stay sorted by `lowered_start`, which `span_at` relies on.
     let mut out = String::new();
+    let mut spans = Vec::with_capacity(esm_statements.len() + body_spans.len());
     for stmt in &esm_statements {
-        out.push_str(stmt);
+        spans.push(Span {
+            lowered_start: out.len(),
+            source_start: stmt.source_start,
+            len: stmt.text.len(),
+        });
+        out.push_str(&stmt.text);
         out.push('\n');
     }
     out.push_str("export default () => (\n  ");
+    let body_start = out.len();
+    spans.extend(body_spans.into_iter().map(|span| Span {
+        lowered_start: span.lowered_start + body_start,
+        ..span
+    }));
     out.push_str(&body);
     out.push_str("\n);\n");
-    Ok(out)
+    Ok(Lowered { tsx: out, spans })
 }
 
 /// Renders the root section's body. When the root itself has a heading or
@@ -247,27 +270,34 @@ pub fn lower_to_tsx(source: &str, path: &str) -> Result<String, LowerError> {
 /// multiple top-level units (e.g. `[<Thing name="widget" />]`). This avoids
 /// ever needing JSX fragment (`<>...</>`) shorthand, which would require the
 /// author to additionally import `Fragment` themselves for no real benefit.
-fn compile_root(section: &Section, out: &mut String) {
+fn compile_root(section: &Section, out: &mut String, spans: &mut Vec<Span>) {
     let has_context = section.heading_text.is_some() || !section.prose_parts.is_empty();
     if has_context {
-        compile_section(section, out);
+        compile_section(section, out, spans);
         return;
     }
-    let items: Vec<String> = section
-        .children
-        .iter()
-        .map(|child| {
-            let mut item = String::new();
-            match child {
-                Child::Verbatim(text) => item.push_str(text),
-                Child::Section(sub) => compile_section(sub, &mut item),
-            }
-            item
-        })
-        .collect();
     out.push('[');
-    out.push_str(&items.join(",\n"));
+    for (index, child) in section.children.iter().enumerate() {
+        if index > 0 {
+            out.push_str(",\n");
+        }
+        match child {
+            Child::Verbatim(verbatim) => push_verbatim(verbatim, out, spans),
+            Child::Section(sub) => compile_section(sub, out, spans),
+        }
+    }
     out.push(']');
+}
+
+/// Copies `verbatim` into `out`, recording where it landed so the bytes can be
+/// traced back to the `.op.mdx`.
+fn push_verbatim(verbatim: &Spanned, out: &mut String, spans: &mut Vec<Span>) {
+    spans.push(Span {
+        lowered_start: out.len(),
+        source_start: verbatim.source_start,
+        len: verbatim.text.len(),
+    });
+    out.push_str(&verbatim.text);
 }
 
 /// The path oxc's source-type sniffing should see for a lowered `.op.mdx`
@@ -280,7 +310,7 @@ fn build_root_section(
     source: &str,
     path: &str,
     root_children: &[Node],
-) -> Result<(Section, Vec<String>), LowerError> {
+) -> Result<(Section, Vec<Spanned>), LowerError> {
     let mut esm_statements = Vec::new();
     let mut stack: Vec<Section> = vec![Section {
         depth: 0,
@@ -292,7 +322,7 @@ fn build_root_section(
     for node in root_children {
         match node {
             Node::MdxjsEsm(esm) => {
-                esm_statements.push(slice(source, path, esm.position.as_ref())?);
+                esm_statements.push(slice_spanned(source, path, esm.position.as_ref())?);
             }
             Node::Heading(heading) => {
                 if let Some(pos) = find_inline_mdx(node) {
@@ -320,12 +350,12 @@ fn build_root_section(
                 });
             }
             Node::MdxJsxFlowElement(_) | Node::MdxFlowExpression(_) => {
-                let text = slice(source, path, node.position())?;
+                let verbatim = slice_spanned(source, path, node.position())?;
                 stack
                     .last_mut()
                     .unwrap()
                     .children
-                    .push(Child::Verbatim(text));
+                    .push(Child::Verbatim(verbatim));
             }
             _ => {
                 let text = slice(source, path, node.position())?;
@@ -365,7 +395,7 @@ fn build_root_section(
     Ok((stack.pop().unwrap(), esm_statements))
 }
 
-fn compile_section(section: &Section, out: &mut String) {
+fn compile_section(section: &Section, out: &mut String, spans: &mut Vec<Span>) {
     let has_context = section.heading_text.is_some() || !section.prose_parts.is_empty();
     if has_context {
         let mut merged = String::new();
@@ -385,8 +415,8 @@ fn compile_section(section: &Section, out: &mut String) {
     }
     for child in &section.children {
         match child {
-            Child::Verbatim(text) => out.push_str(text),
-            Child::Section(sub) => compile_section(sub, out),
+            Child::Verbatim(verbatim) => push_verbatim(verbatim, out, spans),
+            Child::Section(sub) => compile_section(sub, out, spans),
         }
     }
     if has_context {
