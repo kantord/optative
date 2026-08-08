@@ -7,5 +7,28 @@
   "lockFileMaintenance": {
     "automerge": true,
     "enabled": true
-  }
+  },
+  "packageRules": [
+    {
+      "description": "oxc core crates share AST/allocator types and must move in lockstep",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["oxc_*", "!oxc_resolver"],
+      "groupName": "oxc"
+    },
+    {
+      "description": "proc-macro stack",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["syn", "quote", "proc-macro2"],
+      "groupName": "proc-macro"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["serde", "serde_json"],
+      "groupName": "serde"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
+  ]
 }
