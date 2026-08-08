@@ -11,12 +11,12 @@ categories = ["development-tools"]
 [dependencies]
 optative = { version = "0.1.4", path = "../optative" }
 rquickjs = { version = "0.11", features = ["loader"] }
-oxc_allocator = "0.140.0"
-oxc_parser = "0.140.0"
-oxc_semantic = "0.140.0"
-oxc_transformer = "0.140.0"
-oxc_codegen = "0.140.0"
-oxc_span = "0.140.0"
+oxc_allocator = "0.143.0"
+oxc_parser = "0.143.0"
+oxc_semantic = "0.143.0"
+oxc_transformer = "0.143.0"
+oxc_codegen = "0.143.0"
+oxc_span = "0.143.0"
 oxc_resolver = "11.24.2"
 thiserror = "2"
 sha2 = "0.10"
