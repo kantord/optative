@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rquickjs::loader::{Loader, Resolver};
+use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::{Ctx, Module};
 
 use crate::engine::is_script_file;
@@ -51,6 +51,7 @@ impl Resolver for ConfinedFsResolver {
         _ctx: &Ctx<'js>,
         base: &str,
         name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
         if !name.starts_with("./") && !name.starts_with("../") {
             return Err(rquickjs::Error::new_resolving(base, name));
@@ -100,7 +101,12 @@ impl ConfinedFsLoader {
 }
 
 impl Loader for ConfinedFsLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js>> {
         let source =
             std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
         self.loaded_paths.lock().unwrap().push(PathBuf::from(name));

@@ -33,7 +33,7 @@ pub fn lifecycle_trace(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let is_lifecycle_impl = input
         .trait_
         .as_ref()
-        .and_then(|(_, path, _)| path.segments.last())
+        .and_then(|(path, _)| path.segments.last())
         .map(|seg| seg.ident == "Lifecycle")
         .unwrap_or(false);
 

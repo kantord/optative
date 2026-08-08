@@ -1,4 +1,4 @@
-use ts_rs::TS;
+use ts_rs::{Config, TS};
 
 // Context shapes passed to render props — ts-rs generates the TypeScript declarations.
 // FolderCtx and RepoCtx contain function-typed fields that Rust can't express, so
@@ -15,7 +15,9 @@ struct FileCtx {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
-    let file_ctx_decl = FileCtx::decl();
+    // ts-rs 12 threads a `Config` (env-var-derived knobs) through the TS trait;
+    // the defaults are what the previous argument-less `decl()` used.
+    let file_ctx_decl = FileCtx::decl(&Config::default());
 
     let dts = format!(
         r#"// esto.d.ts — ambient declarations for the esto scripting runtime.

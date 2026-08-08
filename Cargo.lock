@@ -364,7 +364,6 @@ dependencies = [
  "optative-script",
  "optative-script-mdx",
  "rquickjs",
- "sha2",
  "tempfile",
  "thiserror",
  "tracing-subscriber",
