@@ -99,8 +99,5 @@ pub const ES_BUILTINS: &[EsEntry] = &[
 ];
 
 pub fn register_builtins(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
-    for entry in ES_BUILTINS {
-        (entry.register)(ctx)?;
-    }
-    Ok(())
+    optative_script::builtins::register_all(ctx, ES_BUILTINS)
 }

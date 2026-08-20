@@ -2,6 +2,7 @@
 //! [tauler](https://github.com/kantord/tauler). Drives the `esto` reconciliation
 //! CLI; expect breaking changes between 0.x releases.
 
+pub mod builtins;
 mod engine;
 pub mod jsx;
 pub mod loader;
@@ -20,6 +21,7 @@ pub use engine::{
 pub use runtime::register_h;
 
 /// One JS builtin exported from a synthetic module.
+#[derive(Clone, Copy)]
 pub struct EsEntry {
     pub module_path: &'static str,
     pub export_name: &'static str,

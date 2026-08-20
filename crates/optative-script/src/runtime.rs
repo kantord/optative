@@ -66,7 +66,7 @@ pub(crate) fn json_parse<'js>(ctx: &Ctx<'js>, json: &str) -> rquickjs::Result<Va
     parse.call((json.to_string(),))
 }
 
-fn object_assign<'js>(
+pub(crate) fn object_assign<'js>(
     ctx: &Ctx<'js>,
     target: Object<'js>,
     source: Object<'js>,
