@@ -4,11 +4,12 @@ pub mod internal;
 
 pub(super) use optative_script::hex_sha256;
 
-pub use esto::{
+pub use esto::register_prompt;
+pub use optative_script::builtins::{
     register_context_marker, register_exists, register_fragment, register_hash, register_ls,
-    register_optative_json_set, register_optative_set, register_prompt, register_read, register_sh,
-    register_unit,
+    register_optative_json_set, register_optative_set, register_read, register_sh, register_unit,
 };
+
 pub use fs::{register_fs_file, register_fs_folder, register_fs_git_repo};
 pub use internal::{
     register_console, register_console_print, register_cwd, register_git_root, register_glob,
