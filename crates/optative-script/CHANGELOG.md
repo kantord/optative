@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/kantord/optative/compare/optative-script-v0.0.9...optative-script-v0.0.10) - 2026-08-20
+
+### Added
+
+- allow using reconciler builtins from optative-script ([#93](https://github.com/kantord/optative/pull/93))
+
 ## [0.0.9](https://github.com/kantord/optative/compare/optative-script-v0.0.8...optative-script-v0.0.9) - 2026-08-08
 
 ### Fixed
