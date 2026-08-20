@@ -2,7 +2,7 @@ pub mod esto;
 pub mod fs;
 pub mod internal;
 
-pub(super) use optative_script::builtins::hex_sha256;
+pub(super) use optative_script::hex_sha256;
 
 pub use esto::register_prompt;
 pub use optative_script::builtins::{

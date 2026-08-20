@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/kantord/optative/compare/optative-script-v0.0.8...optative-script-v0.0.9) - 2026-08-08
+
+### Fixed
+
+- *(deps)* update oxc to 0.143.0 ([#86](https://github.com/kantord/optative/pull/86))
+
+### Other
+
+- update several dependencies ([#88](https://github.com/kantord/optative/pull/88))
+
 ## [0.0.8](https://github.com/kantord/optative/compare/optative-script-v0.0.7...optative-script-v0.0.8) - 2026-07-23
 
 ### Added

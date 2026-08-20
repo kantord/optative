@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use optative::{Lifecycle, OptativeJsonSet, OptativeSet, Reconcile};
 use rquickjs::function::Function;
-use rquickjs::loader::{BuiltinLoader, BuiltinResolver, Loader, Resolver};
+use rquickjs::loader::{BuiltinLoader, BuiltinResolver, ImportAttributes, Loader, Resolver};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Array, CaughtError, Context, Ctx, FromJs, Module, Object, Runtime, Value};
 
@@ -75,7 +75,13 @@ struct ScriptResolver {
 }
 
 impl Resolver for ScriptResolver {
-    fn resolve(&mut self, _ctx: &Ctx, base: &str, name: &str) -> rquickjs::Result<String> {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        base: &str,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<String> {
         if !name.starts_with("./") && !name.starts_with("../") {
             return Err(rquickjs::Error::new_resolving(base, name));
         }
@@ -99,7 +105,12 @@ impl Resolver for ScriptResolver {
 struct ScriptLoader;
 
 impl Loader for ScriptLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js>> {
         let source =
             std::fs::read_to_string(name).map_err(|_| rquickjs::Error::new_loading(name))?;
         let source = if is_script_file(name) {
@@ -126,9 +137,27 @@ pub fn serde_json_simple_array(items: &[String]) -> String {
     format!("[{}]", inner.join(","))
 }
 
+/// Lowercase hex encoding of `bytes`.
+///
+/// `sha2` 0.11 returns a `hybrid_array::Array`, which no longer implements
+/// `LowerHex`, so the digest has to be formatted byte by byte.
+pub fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
+/// Lowercase hex SHA-256 of `s`.
+pub fn hex_sha256(s: &str) -> String {
+    hex_encode(&Sha256::digest(s.as_bytes()))
+}
+
 fn sha12(s: &str) -> String {
-    let hash = Sha256::digest(s.as_bytes());
-    format!("{hash:x}")[..CONTEXT_HASH_LEN].to_string()
+    hex_sha256(s)[..CONTEXT_HASH_LEN].to_string()
 }
 
 fn emit_task(
@@ -1183,4 +1212,40 @@ where
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_sha256_matches_known_digests() {
+        // Locks the byte-by-byte formatting in `hex_encode` to the lowercase,
+        // zero-padded output the old `format!("{:x}", digest)` produced. The
+        // leading-zero byte in the third case is what a naive `{:x}` per byte
+        // would drop.
+        assert_eq!(
+            hex_sha256(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            hex_sha256("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            hex_sha256("\u{0}\u{1}"),
+            "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2"
+        );
+    }
+
+    #[test]
+    fn hex_encode_zero_pads_every_byte() {
+        assert_eq!(hex_encode(&[0x00, 0x0f, 0xff, 0xa5]), "000fffa5");
+    }
+
+    #[test]
+    fn sha12_takes_the_first_twelve_hex_chars() {
+        assert_eq!(sha12("abc"), "ba7816bf8f01");
+        assert_eq!(sha12("abc").len(), CONTEXT_HASH_LEN);
+    }
 }

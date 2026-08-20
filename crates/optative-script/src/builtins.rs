@@ -19,14 +19,9 @@ use rquickjs::function::{Function, Rest};
 use rquickjs::{Array, Ctx, Object, Value};
 
 use crate::runtime::object_assign;
-use crate::{EsEntry, tags};
+use crate::{EsEntry, hex_sha256, tags};
 
 static NEXT_KIND_ID: AtomicU32 = AtomicU32::new(1);
-
-pub fn hex_sha256(s: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(s.as_bytes()))
-}
 
 /// Renders a template-literal interpolation the way JS would, for the tagged
 /// templates (`sh`, `prompt`) that build a string out of one.
