@@ -156,6 +156,56 @@ pub fn synthetic_tsx_path() -> &'static str {
     SYNTHETIC_TSX_PATH
 }
 
+/// Like [`lower_to_tsx`], but additionally recognizes a leading YAML
+/// frontmatter block (`---\n...\n---`) and pulls it out of the source before
+/// lowering the rest normally. Returns the frontmatter text (if any,
+/// trimmed of its own leading/trailing EOL by markdown-rs) alongside the
+/// same lowered TSX `lower_to_tsx` would produce for the document with the
+/// frontmatter block removed. Kept as a separate entry point — rather than a
+/// parameter on `lower_to_tsx` — so callers that don't care about
+/// frontmatter (and every existing test) are unaffected; internally it
+/// reuses `lower_to_tsx` on the stripped source instead of duplicating its
+/// logic.
+pub fn lower_to_tsx_with_frontmatter(
+    source: &str,
+    path: &str,
+) -> Result<(Option<String>, String), LowerError> {
+    let mut options = ParseOptions::mdx();
+    options.constructs.frontmatter = true;
+
+    let tree = markdown::to_mdast(source, &options).map_err(|e| {
+        let (line, column) = point_from_message(&e);
+        LowerError {
+            path: path.to_string(),
+            line,
+            column,
+            message: e.to_string(),
+        }
+    })?;
+
+    let root_children: &[Node] = tree.children().map(Vec::as_slice).unwrap_or(&[]);
+    let Some(Node::Yaml(yaml)) = root_children.first() else {
+        return Ok((None, lower_to_tsx(source, path)?));
+    };
+
+    let end_offset = yaml
+        .position
+        .as_ref()
+        .ok_or_else(|| LowerError {
+            path: path.to_string(),
+            line: 1,
+            column: 1,
+            message: "internal error: markdown-rs frontmatter node is missing position info"
+                .to_string(),
+        })?
+        .end
+        .offset;
+    let rest = &source[end_offset..];
+    let stripped = rest.strip_prefix('\n').unwrap_or(rest);
+
+    Ok((Some(yaml.value.clone()), lower_to_tsx(stripped, path)?))
+}
+
 fn build_root_section(
     source: &str,
     path: &str,
@@ -775,6 +825,39 @@ mod tests {
         let src = "import { Context as Ctx } from 'esto'\n\nHello world.\n";
         let err = lower_to_tsx(src, "test.op.mdx").unwrap_err();
         assert!(err.to_string().contains("no `Context` import was found"));
+    }
+
+    #[test]
+    fn frontmatter_yaml_text_is_extracted_and_stripped_from_the_lowered_body() {
+        // Verified against markdown-rs 1.0.0's `on_exit_frontmatter` (via
+        // `trim_eol`): the Yaml node's `value` has exactly one leading and
+        // one trailing EOL trimmed, so a `---`-fenced block containing
+        // `theme:\n  mode: dark\n` yields the value `"theme:\n  mode: dark"`
+        // (no trailing newline).
+        let src = "---\ntheme:\n  mode: dark\n---\nimport { h } from 'esto'\n\n<Panel id=\"sidebar\" />\n";
+        let (frontmatter, out) = lower_to_tsx_with_frontmatter(src, "test.op.mdx").unwrap();
+        assert_eq!(frontmatter.as_deref(), Some("theme:\n  mode: dark"));
+        assert!(
+            out.contains(r#"<Panel id="sidebar" />"#),
+            "expected the JSX body to survive lowering, got: {out}"
+        );
+        assert!(
+            !out.contains("theme:"),
+            "frontmatter content should not leak into the lowered body, got: {out}"
+        );
+        assert!(
+            !out.contains("---"),
+            "frontmatter fences should not leak into the lowered body, got: {out}"
+        );
+    }
+
+    #[test]
+    fn no_frontmatter_block_returns_none_and_matches_plain_lowering() {
+        let src = "import { h, Context } from 'esto'\n\nHello world.\n";
+        let (frontmatter, out) = lower_to_tsx_with_frontmatter(src, "test.op.mdx").unwrap();
+        assert!(frontmatter.is_none());
+        let plain = lower_to_tsx(src, "test.op.mdx").unwrap();
+        assert_eq!(out, plain);
     }
 
     #[test]
