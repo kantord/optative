@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "esto"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "clap",
  "glob",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "optative-script"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "optative",
  "oxc_allocator",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "optative-script-mdx"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "markdown",
  "optative-script",

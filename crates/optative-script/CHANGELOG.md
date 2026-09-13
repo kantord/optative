@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12](https://github.com/kantord/optative/compare/optative-script-v0.0.11...optative-script-v0.0.12) - 2026-09-13
+
+### Fixed
+
+- *(deps)* update oxc to 0.149.0 ([#105](https://github.com/kantord/optative/pull/105))
+- *(deps)* update rust crate rquickjs to 0.13 ([#114](https://github.com/kantord/optative/pull/114))
+- *(deps)* update oxc to 0.147.0 ([#101](https://github.com/kantord/optative/pull/101))
+
 ## [0.0.11](https://github.com/kantord/optative/compare/optative-script-v0.0.10...optative-script-v0.0.11) - 2026-08-22
 
 ### Fixed
