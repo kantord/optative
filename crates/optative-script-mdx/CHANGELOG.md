@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/kantord/optative/compare/optative-script-mdx-v0.0.6...optative-script-mdx-v0.0.7) - 2026-10-03
+
+### Other
+
+- updated the following local packages: optative-script
+
 ## [0.0.6](https://github.com/kantord/optative/compare/optative-script-mdx-v0.0.5...optative-script-mdx-v0.0.6) - 2026-09-13
 
 ### Other

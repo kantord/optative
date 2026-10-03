@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12](https://github.com/kantord/optative/compare/esto-v0.0.11...esto-v0.0.12) - 2026-10-03
+
+### Fixed
+
+- *(deps)* update rust crate rquickjs to 0.14 ([#121](https://github.com/kantord/optative/pull/121))
+
 ## [0.0.11](https://github.com/kantord/optative/compare/esto-v0.0.10...esto-v0.0.11) - 2026-09-13
 
 ### Fixed
