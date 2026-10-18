@@ -1,0 +1,5 @@
+node_modules
+tasks
+.esto
+test-results
+playwright-report

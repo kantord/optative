@@ -1,0 +1,31 @@
+{
+  "name": "prototype-spec-checks",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "spec": "esto run --dry-run spec.op.tsx || true",
+    "spec:tasks": "esto run spec.op.tsx || true"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.14.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.14.0",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "private": true
+}
