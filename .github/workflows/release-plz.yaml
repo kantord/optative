@@ -22,11 +22,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
       - name: Create git tags and GitHub releases
-        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5
         with:
           command: release
         env:
@@ -85,11 +85,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
       - name: Run release-plz release-pr
-        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5
         with:
           command: release-pr
         env:
